@@ -87,9 +87,15 @@ app.get('/api/public/qrcodes/:id', async (req, res) => {
 app.post('/api/public/qrcodes/:id/resposta', async (req, res) => {
   try {
     const { queryOne: qo, execute: ex } = await import('./db/database.js');
-    const row = await qo('SELECT id, ativo FROM qrcodes WHERE id = $1', [req.params.id]);
-    if (!row) { res.status(404).json({ error: 'QR Code não encontrado' }); return; }
-    if (!row.ativo) { res.status(410).json({ error: 'Este QR Code está desativado' }); return; }
+    const qrRow = await qo(
+      `SELECT q.id, q.nome, q.ativo, q.blocos, q.email_notificacao, u.email AS criador_email, u.nome AS criador_nome
+       FROM qrcodes q
+       INNER JOIN usuarios u ON u.id = q.criado_por
+       WHERE q.id = $1`,
+      [req.params.id]
+    );
+    if (!qrRow) { res.status(404).json({ error: 'QR Code não encontrado' }); return; }
+    if (!qrRow.ativo) { res.status(410).json({ error: 'Este QR Code está desativado' }); return; }
 
     const { identificacao, respostas } = req.body;
     await qo(
@@ -98,6 +104,66 @@ app.post('/api/public/qrcodes/:id/resposta', async (req, res) => {
       [req.params.id, identificacao?.nome || 'Anônimo', identificacao?.email || null, identificacao?.tipo || 'publico', JSON.stringify(identificacao || {}), JSON.stringify(respostas || {})]
     );
     await ex('UPDATE qrcodes SET respostas = respostas + 1 WHERE id = $1', [req.params.id]);
+
+    // ── Notificação por e-mail ──
+    const destinatario: string | null = qrRow.email_notificacao || qrRow.criador_email || null;
+    if (destinatario) {
+      try {
+        const { sendMail, isMailerConfigured, buildRespostaPdf } = await import('./services/mailer.js');
+        if (isMailerConfigured()) {
+          const dataHora = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+          const nomeRespondente = identificacao?.nome || 'Anônimo';
+          const tipoRespondente = identificacao?.tipo || 'público';
+          const blocoUnidade = identificacao?.bloco && identificacao?.unidade
+            ? ` — Bloco ${identificacao.bloco}, Unidade ${identificacao.unidade}`
+            : '';
+
+          let blocosDef: any[] = [];
+          try {
+            blocosDef = typeof qrRow.blocos === 'string' ? JSON.parse(qrRow.blocos) : (qrRow.blocos || []);
+          } catch { blocosDef = []; }
+
+          const pdfBuffer = await buildRespostaPdf({
+            qrNome: qrRow.nome,
+            dataHora,
+            respondente: nomeRespondente,
+            perfil: tipoRespondente,
+            bloco: identificacao?.bloco,
+            unidade: identificacao?.unidade,
+            email: identificacao?.email,
+            blocos: blocosDef,
+            respostas: respostas || {},
+          });
+
+          const safeNome = String(qrRow.nome || 'qrcode').replace(/[^a-z0-9-_]+/gi, '_').slice(0, 40);
+          const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+
+          await sendMail({
+            to: destinatario,
+            subject: `Nova resposta no QR Code: ${qrRow.nome}`,
+            html: `
+              <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:24px;background:#fff;border:1px solid #e0e0e0;border-radius:8px">
+                <div style="background:#1565c0;color:#fff;padding:16px 24px;border-radius:6px 6px 0 0;margin:-24px -24px 24px">
+                  <h1 style="margin:0;font-size:20px">Nova resposta recebida</h1>
+                  <p style="margin:4px 0 0;opacity:.85;font-size:13px">QR Code: <strong>${qrRow.nome}</strong></p>
+                </div>
+                <p style="color:#333;margin:0 0 12px"><strong>${nomeRespondente}</strong>${blocoUnidade} respondeu o formulário em <strong>${dataHora}</strong>.</p>
+                <p style="color:#555;margin:0 0 8px">Perfil: ${tipoRespondente}${identificacao?.email ? ` &middot; ${identificacao.email}` : ''}</p>
+                <p style="color:#1565c0;margin:18px 0 0;font-size:14px"><strong>📎 Formulário completo em anexo (PDF)</strong> — pronto para imprimir ou compartilhar.</p>
+                <p style="margin:24px 0 0;font-size:12px;color:#aaa">Enviado automaticamente pelo sistema Gestão e Limpeza.</p>
+              </div>`,
+            attachments: [{
+              filename: `formulario-${safeNome}-${stamp}.pdf`,
+              content: pdfBuffer,
+              contentType: 'application/pdf',
+            }],
+          });
+        }
+      } catch (mailErr: any) {
+        // Falha no e-mail não deve bloquear a resposta do morador
+        console.error('[QRCode] Erro ao enviar e-mail de notificação:', mailErr.message);
+      }
+    }
 
     res.status(201).json({ ok: true });
   } catch (err: any) { res.status(500).json({ error: err.message }); }

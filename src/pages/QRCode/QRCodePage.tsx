@@ -75,6 +75,7 @@ interface QRCodeFormulario {
   criadoEm: number;
   respostas: number;
   ativo: boolean;
+  emailNotificacao?: string;
 }
 
 interface Identificacao {
@@ -877,6 +878,7 @@ const mapApiQRCode = (qr: any, criadoPorPadrao: string, respostasPadrao = 0): QR
   criadoEm: qr.criadoEm ? new Date(qr.criadoEm).getTime() : Date.now(),
   respostas: qr.respostas || respostasPadrao,
   ativo: qr.ativo !== false,
+  emailNotificacao: qr.emailNotificacao || qr.email_notificacao || '',
 });
 
 const cloneBlocosConfig = (blocos: BlocoConfig[]): BlocoConfig[] => blocos.map(bloco => ({
@@ -1044,6 +1046,7 @@ interface CriarQRCodeParams {
   formBlocosCad: string[];
   condominioId: string;
   usuarioNome: string | undefined;
+  emailNotificacao?: string;
 }
 
 const criarQRCodeFormulario = async ({
@@ -1055,6 +1058,7 @@ const criarQRCodeFormulario = async ({
   formBlocosCad,
   condominioId,
   usuarioNome,
+  emailNotificacao,
 }: CriarQRCodeParams): Promise<QRCodeFormulario> => {
   const created = await qrcodesApi.create({
     nome: formNome.trim(),
@@ -1064,6 +1068,7 @@ const criarQRCodeFormulario = async ({
     dispensarIdentificacao: formDispensarId,
     blocosCadastrados: formBlocosCad.filter(b => b.trim()),
     condominioId,
+    emailNotificacao: emailNotificacao?.trim() || null,
   });
 
   return mapApiQRCode(created, usuarioNome || 'Sistema', 0);
@@ -1080,6 +1085,7 @@ interface ExecutarCriacaoQRCodeParams {
   usuarioCondominioId: string | undefined;
   condominios: Array<{ id: string; nome: string }>;
   usuarioNome: string | undefined;
+  emailNotificacao?: string;
 }
 
 const executarCriacaoQRCode = async ({
@@ -1093,6 +1099,7 @@ const executarCriacaoQRCode = async ({
   usuarioCondominioId,
   condominios,
   usuarioNome,
+  emailNotificacao,
 }: ExecutarCriacaoQRCodeParams) => {
   if (!formNome.trim()) {
     return { sucesso: false, mensagem: 'Preencha o nome do formulário', cor: '#d32f2f' };
@@ -1115,6 +1122,7 @@ const executarCriacaoQRCode = async ({
     formBlocosCad,
     condominioId,
     usuarioNome,
+    emailNotificacao,
   });
 
   return { sucesso: true, novo, mensagem: `✓ QR Code "${novo.nome}" criado!`, cor: '#2e7d32' };
@@ -1796,6 +1804,7 @@ const QRCodePage: React.FC = () => {
   const [formDispensarId, setFormDispensarId] = useState(false);
   const [formBlocosCad, setFormBlocosCad] = useState<string[]>(BLOCOS_PADRAO);
   const [formCondominioId, setFormCondominioId] = useState('');
+  const [formEmailNotif, setFormEmailNotif] = useState('');
   const [funcionarioIntegracaoId, setFuncionarioIntegracaoId] = useState('');
   const [enviandoIntegracoes, setEnviandoIntegracoes] = useState(false);
   const [integracoesSelecionadas, setIntegracoesSelecionadas] = useState<Record<IntegracaoSistema, boolean>>(INTEGRACOES_INICIAIS);
@@ -2142,6 +2151,7 @@ const QRCodePage: React.FC = () => {
           blocosCadastrados: formBlocosCad.filter(b => b.trim()),
           condominioId: obterCondominioSelecionado(formCondominioId, usuario?.condominioId, condominios),
           ativo: qrEmEdicao.ativo,
+          emailNotificacao: formEmailNotif.trim() || null,
         });
         const qrAtualizado = mapApiQRCode(atualizado, qrEmEdicao.criadoPor, qrEmEdicao.respostas);
         setQrcodes(prev => prev.map(qr => qr.id === qrEmEdicao.id ? qrAtualizado : qr));
@@ -2163,6 +2173,7 @@ const QRCodePage: React.FC = () => {
         usuarioCondominioId: usuario?.condominioId,
         condominios,
         usuarioNome: usuario?.nome,
+        emailNotificacao: formEmailNotif.trim() || undefined,
       });
       if (!resultado.sucesso || !resultado.novo) {
         mostrarToast(resultado.mensagem, resultado.cor);
@@ -2181,7 +2192,7 @@ const QRCodePage: React.FC = () => {
     setFormNome(''); setFormDesc(''); setFormLogo(null);
     setFormBlocos([]); setFormDispensarId(false);
     setFormBlocosCad(BLOCOS_PADRAO); setFormCondominioId(obterCondominioSelecionado('', usuario?.condominioId, condominios)); setNovoBlocoNome('');
-    setFuncionarioIntegracaoId(''); setIntegracoesSelecionadas({ ...INTEGRACOES_INICIAIS }); setQrEmEdicao(null);
+    setFuncionarioIntegracaoId(''); setIntegracoesSelecionadas({ ...INTEGRACOES_INICIAIS }); setQrEmEdicao(null); setFormEmailNotif('');
   };
 
   const editarQRCode = (qr: QRCodeFormulario) => {
@@ -2193,6 +2204,7 @@ const QRCodePage: React.FC = () => {
     setFormDispensarId(qr.dispensarIdentificacao);
     setFormBlocosCad([...(qr.blocosCadastrados?.length ? qr.blocosCadastrados : BLOCOS_PADRAO)]);
     setFormCondominioId(qr.condominioId || obterCondominioSelecionado('', usuario?.condominioId, condominios));
+    setFormEmailNotif(qr.emailNotificacao || '');
     setNovoBlocoNome('');
     setIntegracoesSelecionadas({ ...INTEGRACOES_INICIAIS });
     setShowCriar(true);
@@ -2206,10 +2218,11 @@ const QRCodePage: React.FC = () => {
       formLogo !== (qrEmEdicao.logo || null) ||
       formDispensarId !== qrEmEdicao.dispensarIdentificacao ||
       formCondominioId !== (qrEmEdicao.condominioId || obterCondominioSelecionado('', usuario?.condominioId, condominios)) ||
+      formEmailNotif.trim() !== (qrEmEdicao.emailNotificacao || '') ||
       JSON.stringify(formBlocos) !== JSON.stringify(qrEmEdicao.blocos || []) ||
       JSON.stringify(formBlocosCad.filter(bloco => bloco.trim())) !== JSON.stringify((qrEmEdicao.blocosCadastrados || []).filter(bloco => bloco.trim()))
     );
-  }, [condominios, formBlocos, formBlocosCad, formCondominioId, formDesc, formDispensarId, formLogo, formNome, qrEmEdicao, usuario?.condominioId]);
+  }, [condominios, formBlocos, formBlocosCad, formCondominioId, formDesc, formDispensarId, formEmailNotif, formLogo, formNome, qrEmEdicao, usuario?.condominioId]);
 
   const fecharModalQRCode = useCallback(() => {
     if (qrEmEdicao && qrEdicaoAlterada && !globalThis.confirm('Descartar as alterações deste QR Code?')) {
@@ -2223,6 +2236,7 @@ const QRCodePage: React.FC = () => {
     setFormDispensarId(false);
     setFormBlocosCad(BLOCOS_PADRAO);
     setFormCondominioId(obterCondominioSelecionado('', usuario?.condominioId, condominios));
+    setFormEmailNotif('');
     setNovoBlocoNome('');
     setFuncionarioIntegracaoId('');
     setIntegracoesSelecionadas({ ...INTEGRACOES_INICIAIS });
@@ -2593,6 +2607,17 @@ const QRCodePage: React.FC = () => {
               <div className={styles.formGroupFull}>
                 <label className={styles.formLabel} htmlFor="qr-form-desc">Descrição</label>
                 <input id="qr-form-desc" className={styles.formInput} placeholder="Descrição breve..." value={formDesc} onChange={e => setFormDesc(e.target.value)} />
+              </div>
+              <div className={styles.formGroupFull}>
+                <label className={styles.formLabel} htmlFor="qr-form-email-notif">E-mail para notificação de respostas</label>
+                <input
+                  id="qr-form-email-notif"
+                  className={styles.formInput}
+                  type="email"
+                  placeholder="Ex: sindico@condominio.com.br (deixe em branco para usar o e-mail do criador)"
+                  value={formEmailNotif}
+                  onChange={e => setFormEmailNotif(e.target.value)}
+                />
               </div>
             </div>
           </div>

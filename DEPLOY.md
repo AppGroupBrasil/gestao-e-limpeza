@@ -1,27 +1,60 @@
 # Deploy — Gestão e Limpeza (Hetzner)
 
-## Deploy Rápido
+## Caminho do projeto local
+`c:\Users\HP\OneDrive\Área de Trabalho\PASTA APLICATIVOS\Gestão e Limpeza\`
 
-### 1. Upload dos arquivos alterados
-```powershell
-# Da máquina local (PowerShell):
-scp -i ~/.ssh/hetzner_key -r "c:\Users\HP\OneDrive\Área de Trabalho\gestao-app\src" root@46.225.191.114:/opt/gestao-app/
-scp -i ~/.ssh/hetzner_key -r "c:\Users\HP\OneDrive\Área de Trabalho\gestao-app\server" root@46.225.191.114:/opt/gestao-app/
-scp -i ~/.ssh/hetzner_key -r "c:\Users\HP\OneDrive\Área de Trabalho\gestao-app\public" root@46.225.191.114:/opt/gestao-app/
-scp -i ~/.ssh/hetzner_key "c:\Users\HP\OneDrive\Área de Trabalho\gestao-app\index.html" "c:\Users\HP\OneDrive\Área de Trabalho\gestao-app\package.json" "c:\Users\HP\OneDrive\Área de Trabalho\gestao-app\package-lock.json" "c:\Users\HP\OneDrive\Área de Trabalho\gestao-app\.env" root@46.225.191.114:/opt/gestao-app/
+## Regra geral
+- **Nunca** envie `node_modules/`, `dist/`, `.git/` — o `docker compose build` roda `npm install` dentro do container.
+- Envie apenas os arquivos que mudaram. Para mudanças amplas, use `rsync` com excludes (item 2).
+- Rebuild só é necessário quando muda código de aplicação ou `package.json`.
+
+## 1. Deploy mínimo (poucos arquivos alterados — caso comum)
+```bash
+key="$HOME/.ssh/hetzner_key"
+src="/c/Users/HP/OneDrive/Área de Trabalho/PASTA APLICATIVOS/Gestão e Limpeza"
+srv="root@46.225.191.114:/opt/gestao-app"
+
+# Exemplo: backend alterado
+scp -i "$key" "$src/server/src/services/mailer.ts" "$srv/server/src/services/"
+scp -i "$key" "$src/server/src/index.ts" "$srv/server/src/"
+scp -i "$key" "$src/server/package.json" "$src/server/package-lock.json" "$srv/server/"
+
+# Rebuild + restart
+ssh -i "$key" root@46.225.191.114 "cd /opt/gestao-app && docker compose build --no-cache && docker compose up -d"
 ```
 
-### 2. Rebuild e restart no servidor
-```powershell
-ssh -i ~/.ssh/hetzner_key root@46.225.191.114 "cd /opt/gestao-app && docker compose down && docker compose build --no-cache && docker compose up -d"
+## 2. Deploy amplo (rsync, recomendado para muitos arquivos)
+```bash
+key="$HOME/.ssh/hetzner_key"
+src="/c/Users/HP/OneDrive/Área de Trabalho/PASTA APLICATIVOS/Gestão e Limpeza"
+
+# Backend
+rsync -avz --delete \
+  --exclude=node_modules --exclude=dist --exclude=.git --exclude='*.log' \
+  -e "ssh -i $key" \
+  "$src/server/" root@46.225.191.114:/opt/gestao-app/server/
+
+# Frontend (quando mudar)
+rsync -avz --delete \
+  --exclude=node_modules --exclude=dist --exclude=.git \
+  -e "ssh -i $key" \
+  "$src/src/" root@46.225.191.114:/opt/gestao-app/src/
+
+# Rebuild
+ssh -i "$key" root@46.225.191.114 "cd /opt/gestao-app && docker compose build --no-cache && docker compose up -d"
 ```
 
-Antes do rebuild, confirme que `/opt/gestao-app/.env` define `JWT_SECRET` com um valor forte e exclusivo. O `docker-compose.yml` não usa mais fallback inseguro e o backend recusa segredos padrão em produção.
+## 3. Quando rebuild **não** é necessário
+- Mudou só `nginx.conf` → `docker compose restart gestao-app`
+- Mudou só `.env` → `docker compose up -d` (sem `--no-cache`)
 
-### 3. Conferir se está rodando
-```powershell
-ssh -i ~/.ssh/hetzner_key root@46.225.191.114 "docker ps --filter name=gestao-app --format 'table {{.Names}}\t{{.Status}}'"
+## 4. Conferir se está rodando
+```bash
+ssh -i ~/.ssh/hetzner_key root@46.225.191.114 "docker ps --filter name=gestao --format 'table {{.Names}}\t{{.Status}}'"
+ssh -i ~/.ssh/hetzner_key root@46.225.191.114 "docker logs --tail 30 gestao-api"
 ```
+
+> Antes de rebuild, confirme que `/opt/gestao-app/.env` define `JWT_SECRET` forte e exclusivo. O backend recusa segredos padrão em produção.
 
 ---
 
@@ -63,16 +96,18 @@ Observação: o backend local agora aplica automaticamente as migrations pendent
 Observação adicional: em produção, use um `JWT_SECRET` gerado especificamente para o ambiente, por exemplo com `openssl rand -hex 32`, e mantenha esse valor apenas no `.env` do servidor.
 
 ### Mudou só código (CSS/TSX, sem novas dependências)
-Mesmo processo — passos 1, 2 e 3 acima.
+Use o caminho 1 (mínimo) ou 2 (rsync) acima — só os arquivos alterados.
 
 ### Adicionou novas dependências (npm install)
-Atualizar o `package-lock.json` local e incluir no upload do passo 1.
+Inclua `package.json` e `package-lock.json` no upload e rebuild com `--no-cache`.
 
 ### Mudou Dockerfile, nginx.conf ou docker-compose.yml
-```powershell
-scp -i ~/.ssh/hetzner_key "c:\Users\HP\OneDrive\Área de Trabalho\gestao-app\Dockerfile" "c:\Users\HP\OneDrive\Área de Trabalho\gestao-app\docker-compose.yml" "c:\Users\HP\OneDrive\Área de Trabalho\gestao-app\nginx.conf" root@46.225.191.114:/opt/gestao-app/
+```bash
+scp -i "$HOME/.ssh/hetzner_key" \
+  "$src/Dockerfile" "$src/docker-compose.yml" "$src/nginx.conf" \
+  root@46.225.191.114:/opt/gestao-app/
 ```
-Depois rebuild normalmente (passo 2).
+Depois rebuild (caminho 1, último comando).
 
 ## Outros Apps no Mesmo Servidor
 

@@ -203,16 +203,16 @@ router.get('/:id', async (req: AuthRequest, res: Response) => {
 router.post('/', async (req: AuthRequest, res: Response) => {
   try {
     if (!req.user) { res.status(401).json({ error: 'Não autenticado' }); return; }
-    const { nome, descricao, logo, blocos, dispensarIdentificacao, blocosCadastrados, condominioId } = req.body;
+    const { nome, descricao, logo, blocos, dispensarIdentificacao, blocosCadastrados, condominioId, emailNotificacao } = req.body;
     const ids: string[] = (req as any).condominioIds;
     if (!condominioId || !ids.includes(condominioId)) {
       res.status(403).json({ error: 'Sem permissão para este condomínio' });
       return;
     }
     const row = await queryOne(
-      `INSERT INTO qrcodes (nome, descricao, logo, blocos, dispensar_identificacao, blocos_cadastrados, condominio_id, criado_por)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-      [nome, descricao, logo, JSON.stringify(blocos || []), dispensarIdentificacao || false, blocosCadastrados || [], condominioId, req.user.id]
+      `INSERT INTO qrcodes (nome, descricao, logo, blocos, dispensar_identificacao, blocos_cadastrados, condominio_id, criado_por, email_notificacao)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+      [nome, descricao, logo, JSON.stringify(blocos || []), dispensarIdentificacao || false, blocosCadastrados || [], condominioId, req.user.id, emailNotificacao || null]
     );
     res.status(201).json(row);
   } catch (err: any) { console.error("[QRCodes]", err.message); res.status(500).json({ error: "Erro interno" }); }
@@ -222,16 +222,16 @@ router.post('/', async (req: AuthRequest, res: Response) => {
 router.put('/:id', async (req: AuthRequest, res: Response) => {
   try {
     const ids: string[] = (req as any).condominioIds;
-    const { nome, descricao, logo, blocos, dispensarIdentificacao, blocosCadastrados, condominioId } = req.body;
+    const { nome, descricao, logo, blocos, dispensarIdentificacao, blocosCadastrados, condominioId, emailNotificacao } = req.body;
     const destinoCondominioId = condominioId || null;
     if (destinoCondominioId && !ids.includes(destinoCondominioId)) {
       res.status(403).json({ error: 'Sem permissão para este condomínio' });
       return;
     }
     const row = await queryOne(
-      `UPDATE qrcodes SET nome=$1, descricao=$2, logo=$3, blocos=$4, dispensar_identificacao=$5, blocos_cadastrados=$6, condominio_id = COALESCE($7, condominio_id)
+      `UPDATE qrcodes SET nome=$1, descricao=$2, logo=$3, blocos=$4, dispensar_identificacao=$5, blocos_cadastrados=$6, condominio_id = COALESCE($7, condominio_id), email_notificacao=$10
        WHERE id=$8 AND condominio_id = ANY($9) RETURNING *`,
-      [nome, descricao, logo, JSON.stringify(blocos), dispensarIdentificacao, blocosCadastrados, destinoCondominioId, req.params.id, ids]
+      [nome, descricao, logo, JSON.stringify(blocos), dispensarIdentificacao, blocosCadastrados, destinoCondominioId, req.params.id, ids, emailNotificacao || null]
     );
     if (!row) { res.status(404).json({ error: 'QR Code não encontrado' }); return; }
     res.json(row);
