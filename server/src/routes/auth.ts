@@ -1,6 +1,30 @@
 import { Router, Response } from 'express';
+import rateLimit from 'express-rate-limit';
 import bcrypt from 'bcrypt';
 import crypto from 'node:crypto';
+
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60_000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+  message: { error: 'Muitas tentativas de login. Aguarde 15 minutos.' },
+});
+const passwordResetLimiter = rateLimit({
+  windowMs: 60 * 60_000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Muitas solicitações. Aguarde 1 hora.' },
+});
+const selfRegisterLimiter = rateLimit({
+  windowMs: 60 * 60_000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Muitas tentativas de cadastro. Aguarde 1 hora.' },
+});
 import { query, queryOne } from '../db/database.js';
 import { generateToken, AuthRequest, authMiddleware } from '../middleware/auth.js';
 import { checkRateLimit, recordLoginAttempt, auditLog, createNotification } from '../middleware/helpers.js';
@@ -56,7 +80,7 @@ function resolveAdminId(caller: { role: string; id: string; administrador_id?: s
 }
 
 // POST /api/auth/login
-router.post('/login', async (req, res: Response) => {
+router.post('/login', loginLimiter, async (req, res: Response) => {
   try {
     const { email, senha } = req.body;
     const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || '';
@@ -222,7 +246,7 @@ router.post('/change-password', authMiddleware, async (req: AuthRequest, res: Re
 });
 
 // POST /api/auth/self-register (public — creates 'administrador' account)
-router.post('/self-register', async (req, res: Response) => {
+router.post('/self-register', selfRegisterLimiter, async (req, res: Response) => {
   try {
     const { email, senha, nome, telefone } = req.body;
 
@@ -285,7 +309,7 @@ router.post('/self-register', async (req, res: Response) => {
 });
 
 // POST /api/auth/forgot-password (public — generates reset token)
-router.post('/forgot-password', async (req, res: Response) => {
+router.post('/forgot-password', passwordResetLimiter, async (req, res: Response) => {
   try {
     const { email } = req.body;
 
@@ -326,7 +350,7 @@ router.post('/forgot-password', async (req, res: Response) => {
 });
 
 // POST /api/auth/reset-password (public — resets password with token)
-router.post('/reset-password', async (req, res: Response) => {
+router.post('/reset-password', passwordResetLimiter, async (req, res: Response) => {
   try {
     const { token, novaSenha } = req.body;
 

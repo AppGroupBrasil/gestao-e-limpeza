@@ -6,12 +6,18 @@ import cors from 'cors';
 import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
+import { pinoHttp } from 'pino-http';
 import sharp from 'sharp';
-import pool from './db/database.js';
+import pool, { queryOne, query as dbQuery, execute } from './db/database.js';
 import { runPendingMigrations } from './db/runMigrations.js';
 import { authMiddleware } from './middleware/auth.js';
 import { scopeMiddleware } from './middleware/rbac.js';
 import { trackMetric } from './middleware/helpers.js';
+import { handle500 } from './middleware/errors.js';
+import { logger } from './services/logger.js';
+import { sendMail, isMailerConfigured, buildRespostaPdf } from './services/mailer.js';
 import authRoutes from './routes/auth.js';
 import condominiosRoutes from './routes/condominios.js';
 import ordensServicoRoutes from './routes/ordensServico.js';
@@ -47,11 +53,31 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = Number.parseInt(process.env.PORT || '3001');
 
+// Atrás de nginx/cloudflare/heroku — necessário para rate-limit ler IP real
+app.set('trust proxy', Number.parseInt(process.env.TRUST_PROXY || '1'));
+
 // ── Middlewares globais ──
 const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:3000')
   .split(',')
   .map(o => o.trim());
 
+app.use(pinoHttp({
+  logger,
+  customLogLevel: (_req: any, res: any, err: any) => {
+    if (err || res.statusCode >= 500) return 'error';
+    if (res.statusCode >= 400) return 'warn';
+    return 'info';
+  },
+  autoLogging: { ignore: (req: any) => req.url === '/api/health' },
+  serializers: {
+    req: (req: any) => ({ method: req.method, url: req.url }),
+    res: (res: any) => ({ statusCode: res.statusCode }),
+  },
+}));
+app.use(helmet({
+  contentSecurityPolicy: false, // SPA controla via meta tags
+  crossOriginResourcePolicy: { policy: 'cross-origin' }, // permite /uploads de outras origens
+}));
 app.use(cors({
   origin: (origin, callback) => {
     // Allow requests with no origin (mobile apps, curl, server-to-server)
@@ -67,27 +93,40 @@ app.use(cors({
   },
   credentials: true,
 }));
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '2mb' }));
 app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
+
+// ── Rate limiters ──
+const publicWriteLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Muitas requisições. Tente novamente em instantes.' },
+});
+const publicReadLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 // ── Rotas públicas ──
 app.use('/api/auth', authRoutes);
 
 // ── QR Code público (sem auth) ──
-app.get('/api/public/qrcodes/:id', async (req, res) => {
+app.get('/api/public/qrcodes/:id', publicReadLimiter, async (req, res) => {
   try {
-    const { queryOne: qo } = await import('./db/database.js');
-    const row = await qo('SELECT id, nome, descricao, logo, blocos, dispensar_identificacao, blocos_cadastrados, ativo FROM qrcodes WHERE id = $1', [req.params.id]);
+    const row = await queryOne('SELECT id, nome, descricao, logo, blocos, dispensar_identificacao, blocos_cadastrados, ativo FROM qrcodes WHERE id = $1', [req.params.id]);
     if (!row) { res.status(404).json({ error: 'QR Code não encontrado' }); return; }
     if (!row.ativo) { res.status(410).json({ error: 'Este QR Code está desativado' }); return; }
     res.json(row);
-  } catch (err: any) { res.status(500).json({ error: err.message }); }
+  } catch (err) { handle500(err, res, 'GET /public/qrcodes/:id'); }
 });
 
-app.post('/api/public/qrcodes/:id/resposta', async (req, res) => {
+app.post('/api/public/qrcodes/:id/resposta', publicWriteLimiter, async (req, res) => {
   try {
-    const { queryOne: qo, execute: ex } = await import('./db/database.js');
-    const qrRow = await qo(
+    const qrRow = await queryOne(
       `SELECT q.id, q.nome, q.ativo, q.blocos, q.email_notificacao, u.email AS criador_email, u.nome AS criador_nome
        FROM qrcodes q
        INNER JOIN usuarios u ON u.id = q.criado_por
@@ -98,18 +137,17 @@ app.post('/api/public/qrcodes/:id/resposta', async (req, res) => {
     if (!qrRow.ativo) { res.status(410).json({ error: 'Este QR Code está desativado' }); return; }
 
     const { identificacao, respostas } = req.body;
-    await qo(
+    await execute(
       `INSERT INTO leituras_qrcode (qr_conteudo, funcionario_nome, funcionario_email, funcionario_cargo, identificacao, respostas_formulario)
-       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+       VALUES ($1,$2,$3,$4,$5,$6)`,
       [req.params.id, identificacao?.nome || 'Anônimo', identificacao?.email || null, identificacao?.tipo || 'publico', JSON.stringify(identificacao || {}), JSON.stringify(respostas || {})]
     );
-    await ex('UPDATE qrcodes SET respostas = respostas + 1 WHERE id = $1', [req.params.id]);
+    await execute('UPDATE qrcodes SET respostas = respostas + 1 WHERE id = $1', [req.params.id]);
 
     // ── Notificação por e-mail ──
     const destinatario: string | null = qrRow.email_notificacao || qrRow.criador_email || null;
     if (destinatario) {
       try {
-        const { sendMail, isMailerConfigured, buildRespostaPdf } = await import('./services/mailer.js');
         if (isMailerConfigured()) {
           const dataHora = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
           const nomeRespondente = identificacao?.nome || 'Anônimo';
@@ -160,37 +198,34 @@ app.post('/api/public/qrcodes/:id/resposta', async (req, res) => {
           });
         }
       } catch (mailErr: any) {
-        // Falha no e-mail não deve bloquear a resposta do morador
-        console.error('[QRCode] Erro ao enviar e-mail de notificação:', mailErr.message);
+        logger.warn({ err: mailErr?.message }, '[QRCode] Falha ao enviar e-mail de notificação');
       }
     }
 
     res.status(201).json({ ok: true });
-  } catch (err: any) { res.status(500).json({ error: err.message }); }
+  } catch (err) { handle500(err, res, 'POST /public/qrcodes/:id/resposta'); }
 });
 
 // ── Documento público por slug (sem auth) ──
-app.get('/api/public/doc/:slug', async (req, res) => {
+app.get('/api/public/doc/:slug', publicReadLimiter, async (req, res) => {
   try {
-    const { queryOne: qo, execute: ex } = await import('./db/database.js');
-    const row = await qo(
+    const row = await queryOne(
       `SELECT id, slug, titulo, tipo, conteudo, arquivo_url, arquivo_nome, ativo, criado_em, atualizado_em
        FROM documentos_publicos WHERE slug = $1`,
       [req.params.slug]
     );
     if (!row) { res.status(404).json({ error: 'Documento não encontrado' }); return; }
     if (!row.ativo) { res.status(410).json({ error: 'Este documento está desativado' }); return; }
-    // Incrementar visualizações (não bloqueia resposta)
-    ex('UPDATE documentos_publicos SET visualizacoes = visualizacoes + 1 WHERE slug = $1', [req.params.slug]).catch(() => {});
+    execute('UPDATE documentos_publicos SET visualizacoes = visualizacoes + 1 WHERE slug = $1', [req.params.slug])
+      .catch(e => logger.warn({ err: e?.message }, '[doc] falha incrementar visualizacoes'));
     res.json(row);
-  } catch { res.status(500).json({ error: 'Erro interno' }); }
+  } catch (err) { handle500(err, res, 'GET /public/doc/:slug'); }
 });
 
 // ── Registro de ronda público (funcionário escaneia QR sem login) ──
-app.get('/api/public/ronda/:id', async (req, res) => {
+app.get('/api/public/ronda/:id', publicReadLimiter, async (req, res) => {
   try {
-    const { queryOne: qo } = await import('./db/database.js');
-    const row = await qo(
+    const row = await queryOne(
       `SELECT p.id, p.titulo, p.descricao, p.imagem, p.ativo, p.condominio_id,
               c.nome AS condominio_nome
        FROM pontos_ronda p
@@ -201,14 +236,13 @@ app.get('/api/public/ronda/:id', async (req, res) => {
     if (!row) { res.status(404).json({ error: 'Ponto de ronda não encontrado' }); return; }
     if (!row.ativo) { res.status(410).json({ error: 'Este ponto de ronda está desativado' }); return; }
     res.json(row);
-  } catch { res.status(500).json({ error: 'Erro interno' }); }
+  } catch (err) { handle500(err, res, 'GET /public/ronda/:id'); }
 });
 
 // ── Funcionários do condomínio do ponto (para dropdown público) ──
-app.get('/api/public/ronda/:id/funcionarios', async (req, res) => {
+app.get('/api/public/ronda/:id/funcionarios', publicReadLimiter, async (req, res) => {
   try {
-    const { queryOne: qo, query: q } = await import('./db/database.js');
-    const ponto = await qo(
+    const ponto = await queryOne(
       `SELECT p.condominio_id, c.criado_por
        FROM pontos_ronda p
        INNER JOIN condominios c ON c.id = p.condominio_id
@@ -217,10 +251,7 @@ app.get('/api/public/ronda/:id/funcionarios', async (req, res) => {
     );
     if (!ponto) { res.status(404).json({ error: 'Ponto não encontrado' }); return; }
 
-    // Buscar funcionários:
-    // 1. Pelo condominio_id direto OU
-    // 2. Pelo administrador que criou o condominio (hierarquia)
-    const rows = await q(
+    const rows = await dbQuery(
       `SELECT id, nome FROM usuarios
        WHERE ativo = true AND bloqueado = false
          AND role IN ('funcionario', 'supervisor')
@@ -234,13 +265,12 @@ app.get('/api/public/ronda/:id/funcionarios', async (req, res) => {
       [ponto.condominio_id, ponto.criado_por]
     );
     res.json(rows);
-  } catch { res.status(500).json({ error: 'Erro interno' }); }
+  } catch (err) { handle500(err, res, 'GET /public/ronda/:id/funcionarios'); }
 });
 
-app.post('/api/public/ronda/:id/registrar', async (req, res) => {
+app.post('/api/public/ronda/:id/registrar', publicWriteLimiter, async (req, res) => {
   try {
-    const { queryOne: qo } = await import('./db/database.js');
-    const ponto = await qo('SELECT id, ativo FROM pontos_ronda WHERE id = $1', [req.params.id]);
+    const ponto = await queryOne('SELECT id, ativo FROM pontos_ronda WHERE id = $1', [req.params.id]);
     if (!ponto) { res.status(404).json({ error: 'Ponto não encontrado' }); return; }
     if (!ponto.ativo) { res.status(410).json({ error: 'Ponto desativado' }); return; }
 
@@ -249,10 +279,19 @@ app.post('/api/public/ronda/:id/registrar', async (req, res) => {
       res.status(400).json({ error: 'Selecione o funcionário' }); return;
     }
 
-    // Salvar selfie se enviada (base64 → webp)
     let selfieUrl: string | null = null;
     if (fotoSelfie && typeof fotoSelfie === 'string') {
-      const base64Data = fotoSelfie.replace(/^data:image\/\w+;base64,/, '');
+      const mimeMatch = fotoSelfie.match(/^data:image\/(jpeg|jpg|png|webp);base64,/i);
+      if (!mimeMatch) {
+        res.status(400).json({ error: 'Formato de imagem inválido (use JPEG, PNG ou WebP)' });
+        return;
+      }
+      const base64Data = fotoSelfie.slice(mimeMatch[0].length);
+      // base64 size * 0.75 ≈ bytes reais; limite ~3MB
+      if (base64Data.length > 4_000_000) {
+        res.status(413).json({ error: 'Imagem muito grande (máx 3MB)' });
+        return;
+      }
       const buffer = Buffer.from(base64Data, 'base64');
       const filename = `ronda-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.webp`;
       const dir = path.join(__dirname, '..', 'uploads', 'rondas');
@@ -264,30 +303,25 @@ app.post('/api/public/ronda/:id/registrar', async (req, res) => {
       selfieUrl = `/uploads/rondas/${filename}`;
     }
 
-    // Resolver nome do funcionário pelo ID se necessário
     let nome = funcionarioNome?.trim() || '';
     if (funcionarioId) {
-      const func = await qo('SELECT nome FROM usuarios WHERE id = $1', [funcionarioId]);
+      const func = await queryOne('SELECT nome FROM usuarios WHERE id = $1', [funcionarioId]);
       if (func) nome = func.nome;
     }
 
-    const row = await qo(
+    const row = await queryOne(
       `INSERT INTO registros_ronda (ponto_id, funcionario_id, funcionario_nome, latitude, longitude, endereco, observacao, foto_selfie)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
       [req.params.id, funcionarioId || null, nome, latitude || null, longitude || null, endereco || null, observacao || null, selfieUrl]
     );
     res.status(201).json(row);
-  } catch (err: any) {
-    console.error('[RONDA REGISTRAR]', err.message);
-    res.status(500).json({ error: 'Erro interno' });
-  }
+  } catch (err) { handle500(err, res, 'POST /public/ronda/:id/registrar'); }
 });
 
 // ── Checklist público por link/QR ──
-app.get('/api/public/checklists/:id', async (req, res) => {
+app.get('/api/public/checklists/:id', publicReadLimiter, async (req, res) => {
   try {
-    const { queryOne: qo } = await import('./db/database.js');
-    const row = await qo(
+    const row = await queryOne(
       `SELECT ch.*, c.nome AS condominio_nome, u.nome AS responsavel_nome
        FROM checklists ch
        LEFT JOIN condominios c ON c.id = ch.condominio_id
@@ -302,9 +336,8 @@ app.get('/api/public/checklists/:id', async (req, res) => {
   }
 });
 
-app.patch('/api/public/checklists/:id/itens', async (req, res) => {
+app.patch('/api/public/checklists/:id/itens', publicWriteLimiter, async (req, res) => {
   try {
-    const { queryOne: qo } = await import('./db/database.js');
     const { itens, status, horaFim, assinatura } = req.body;
     const fields: string[] = ['itens = $1'];
     const params: any[] = [JSON.stringify(itens || [])];
@@ -314,22 +347,19 @@ app.patch('/api/public/checklists/:id/itens', async (req, res) => {
     if (assinatura) { fields.push(`assinatura = $${idx++}`); params.push(assinatura); }
     params.push(req.params.id);
 
-    const row = await qo(
+    const row = await queryOne(
       `UPDATE checklists SET ${fields.join(', ')} WHERE id = $${idx} RETURNING *`,
       params
     );
     if (!row) { res.status(404).json({ error: 'Checklist não encontrado' }); return; }
     res.json(row);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message || 'Erro interno' });
-  }
+  } catch (err) { handle500(err, res, 'PATCH /public/checklists/:id/itens'); }
 });
 
 // ── Vistoria pública por link/QR ──
-app.get('/api/public/vistorias/:id', async (req, res) => {
+app.get('/api/public/vistorias/:id', publicReadLimiter, async (req, res) => {
   try {
-    const { queryOne: qo } = await import('./db/database.js');
-    const row = await qo(
+    const row = await queryOne(
       `SELECT v.*, c.nome AS condominio_nome
        FROM vistorias v
        LEFT JOIN condominios c ON c.id = v.condominio_id
@@ -338,18 +368,15 @@ app.get('/api/public/vistorias/:id', async (req, res) => {
     );
     if (!row) { res.status(404).json({ error: 'Vistoria não encontrada' }); return; }
     res.json(row);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message || 'Erro interno' });
-  }
+  } catch (err) { handle500(err, res, 'GET /public/vistorias/:id'); }
 });
 
-app.put('/api/public/vistorias/:id', async (req, res) => {
+app.put('/api/public/vistorias/:id', publicWriteLimiter, async (req, res) => {
   try {
-    const { queryOne: qo } = await import('./db/database.js');
-    const atual = await qo('SELECT * FROM vistorias WHERE id = $1', [req.params.id]);
+    const atual = await queryOne('SELECT * FROM vistorias WHERE id = $1', [req.params.id]);
     if (!atual) { res.status(404).json({ error: 'Vistoria não encontrada' }); return; }
 
-    const row = await qo(
+    const row = await queryOne(
       `UPDATE vistorias
        SET titulo = $1,
            tipo = $2,
@@ -372,16 +399,13 @@ app.put('/api/public/vistorias/:id', async (req, res) => {
       ]
     );
     res.json(row);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message || 'Erro interno' });
-  }
+  } catch (err) { handle500(err, res, 'PUT /public/vistorias/:id'); }
 });
 
 // ── Tarefa pública por link/QR ──
-app.get('/api/public/tarefas/:id', async (req, res) => {
+app.get('/api/public/tarefas/:id', publicReadLimiter, async (req, res) => {
   try {
-    const { queryOne: qo } = await import('./db/database.js');
-    const row = await qo(
+    const row = await queryOne(
       `SELECT t.*, c.nome AS condominio_nome
        FROM tarefas_agendadas t
        LEFT JOIN condominios c ON c.id = t.condominio_id
@@ -390,19 +414,16 @@ app.get('/api/public/tarefas/:id', async (req, res) => {
     );
     if (!row) { res.status(404).json({ error: 'Tarefa não encontrada' }); return; }
     res.json(row);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message || 'Erro interno' });
-  }
+  } catch (err) { handle500(err, res, 'GET /public/tarefas/:id'); }
 });
 
-app.post('/api/public/tarefas/:id/execucao', async (req, res) => {
+app.post('/api/public/tarefas/:id/execucao', publicWriteLimiter, async (req, res) => {
   try {
-    const { queryOne: qo } = await import('./db/database.js');
-    const tarefa = await qo('SELECT id, funcionario_id, funcionario_nome FROM tarefas_agendadas WHERE id = $1', [req.params.id]);
+    const tarefa = await queryOne('SELECT id, funcionario_id, funcionario_nome FROM tarefas_agendadas WHERE id = $1', [req.params.id]);
     if (!tarefa) { res.status(404).json({ error: 'Tarefa não encontrada' }); return; }
 
     const { status, observacao, fotos, latitude, longitude, audioUrl, endereco, reporteProblema } = req.body;
-    const row = await qo(
+    const row = await queryOne(
       `INSERT INTO tarefas_execucoes (
         tarefa_id, funcionario_id, funcionario_nome, status, fotos, observacao, latitude, longitude, audio_url, endereco, reporte_problema
       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
@@ -421,9 +442,7 @@ app.post('/api/public/tarefas/:id/execucao', async (req, res) => {
       ]
     );
     res.status(201).json(row);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message || 'Erro interno' });
-  }
+  } catch (err) { handle500(err, res, 'POST /public/tarefas/:id/execucao'); }
 });
 
 // ── Rotas protegidas ──
@@ -470,7 +489,9 @@ protectedRouter.use('/documentos-publicos', docPublicosRoutes);
 protectedRouter.use('/rondas', rondasRoutes);
 protectedRouter.use('/antes-depois', antesDepoisRoutes);
 
-// ── Health check (before auth middleware) ──
+const APP_VERSION = process.env.npm_package_version || '1.0.0';
+
+// ── Health check (público, antes do auth) ──
 app.get('/api/health', async (_req, res) => {
   const start = Date.now();
   try {
@@ -478,6 +499,7 @@ app.get('/api/health', async (_req, res) => {
     res.json({
       status: 'ok',
       db: 'connected',
+      version: APP_VERSION,
       uptime: Math.floor(process.uptime()),
       timestamp: new Date().toISOString(),
       responseTime: Date.now() - start,
@@ -493,22 +515,42 @@ app.use('/api', protectedRouter);
 
 // ── Global error handler (captura erros não tratados em qualquer rota) ──
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  console.error('[SERVER ERROR]', err?.message || err);
-  if (err.status && err.status < 500) {
-    res.status(err.status).json({ error: err.message });
+  const status = typeof err?.status === 'number' && err.status >= 400 && err.status < 500 ? err.status : 500;
+  logger.error({ err: err?.message || String(err), status }, '[SERVER ERROR]');
+  if (status < 500) {
+    res.status(status).json({ error: err.message });
     return;
   }
   res.status(500).json({ error: 'Erro interno no servidor' });
 });
 
+// ── Pool error handler (cliente idle morto não derruba o processo) ──
+pool.on('error', (err) => {
+  logger.error({ err: err?.message }, '[PG POOL ERROR]');
+});
+
 // ── Start ──
 try {
   await runPendingMigrations();
-  app.listen(PORT, () => {
-    console.log(`API rodando em http://localhost:${PORT}`);
+  const server = app.listen(PORT, () => {
+    logger.info(`API v${APP_VERSION} rodando em http://localhost:${PORT}`);
   });
+
+  // ── Graceful shutdown ──
+  const shutdown = (signal: string) => {
+    logger.info(`[SHUTDOWN] ${signal} recebido — encerrando...`);
+    server.close(async () => {
+      try { await pool.end(); } catch (e: any) { logger.warn({ err: e?.message }, '[SHUTDOWN] pool.end falhou'); }
+      logger.info('[SHUTDOWN] finalizado');
+      process.exit(0);
+    });
+    // força saída se hang em 10s
+    setTimeout(() => { logger.warn('[SHUTDOWN] timeout — forçando exit'); process.exit(1); }, 10_000).unref();
+  };
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
 } catch (err: any) {
-  console.error('[BOOT ERROR]', err?.message || err);
+  logger.fatal({ err: err?.message || String(err) }, '[BOOT ERROR]');
   process.exit(1);
 }
 

@@ -3,6 +3,7 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './contexts/AuthContext';
 import { ROLE_HIERARCHY } from './types';
 import MainLayout from './components/Layout/MainLayout';
+import ErrorBoundary from './components/ErrorBoundary';
 
 /* ── Lazy-loaded pages (code splitting) ── */
 const LoginPage = React.lazy(() => import('./pages/Auth/LoginPage'));
@@ -89,6 +90,7 @@ const App: React.FC = () => {
   const { usuario, carregando } = useAuth();
 
   return (
+    <ErrorBoundary>
     <Suspense fallback={<PageLoader />}>
     <Routes>
       {/* Página institucional pública */}
@@ -158,6 +160,7 @@ const App: React.FC = () => {
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
     </Suspense>
+    </ErrorBoundary>
   );
 };
 

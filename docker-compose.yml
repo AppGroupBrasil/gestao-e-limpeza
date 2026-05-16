@@ -7,9 +7,13 @@ services:
     container_name: gestao-api
     restart: unless-stopped
     environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      TRUST_PROXY: ${TRUST_PROXY:-1}
       PORT: "3001"
       DATABASE_URL: ${DATABASE_URL:-}
       DB_SSL: ${DB_SSL:-false}
+      DB_POOL_MAX: ${DB_POOL_MAX:-80}
       JWT_SECRET: ${JWT_SECRET}
       CORS_ORIGIN: ${CORS_ORIGIN:-https://gestaoelimpeza.com.br}
       FRONTEND_URL: ${FRONTEND_URL:-https://gestaoelimpeza.com.br}
