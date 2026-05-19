@@ -1,6 +1,8 @@
 services:
   # ── API Backend ──
   gestao-api:
+    env_file:
+      - .env
     build:
       context: ./server
       dockerfile: Dockerfile
