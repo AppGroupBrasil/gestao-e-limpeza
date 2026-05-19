@@ -73,7 +73,7 @@ export async function authMiddleware(req: AuthRequest, res: Response, next: Next
 
   try {
     const raw: any = jwt.verify(header.slice(7), JWT_SECRET);
-    const userId: string = raw.userId || raw.sub;
+    let userId: string = raw.userId || raw.sub;
 
     // Token do auth-central traz apps[]
     if (Array.isArray(raw.apps)) {
@@ -86,16 +86,22 @@ export async function authMiddleware(req: AuthRequest, res: Response, next: Next
         res.status(403).json({ error: 'Licença expirada' });
         return;
       }
-      const existing = await queryOne(`SELECT id FROM usuarios WHERE id = $1`, [userId]);
-      if (!existing) {
-        await query(
-          `INSERT INTO usuarios (id, email, senha_hash, nome, role, ativo)
-           VALUES ($1, $2, '!central!', $3, $4::user_role, true)
-           ON CONFLICT (id) DO NOTHING`,
+      // Procura primeiro por central_uuid; se nao, por email; se nao, cria
+      let existing = await queryOne(`SELECT id FROM usuarios WHERE central_uuid = $1`, [userId]);
+      if (!existing) existing = await queryOne(`SELECT id FROM usuarios WHERE email = $1`, [raw.email]);
+      if (existing) {
+        // Garante central_uuid setado
+        await query(`UPDATE usuarios SET central_uuid = $1 WHERE id = $2 AND (central_uuid IS NULL OR central_uuid <> $1)`, [userId, existing.id]);
+        userId = existing.id;
+      } else {
+        const novo = await queryOne(
+          `INSERT INTO usuarios (central_uuid, email, senha_hash, nome, role, ativo)
+           VALUES ($1, $2, '!central!', $3, $4::user_role, true) RETURNING id`,
           [userId, raw.email, raw.nome || raw.email, mapearRoleCentral(licenca.role)]
         );
-        cacheDel(`auth:${userId}`);
+        if (novo) userId = novo.id;
       }
+      cacheDel(`auth:${userId}`);
     }
 
     const decoded = { userId, email: raw.email, role: raw.role || '' } as JwtPayload;

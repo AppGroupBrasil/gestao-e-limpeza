@@ -26,29 +26,22 @@ router.post('/usuario', async (req: Request, res: Response) => {
   const ativo = b.status === 'ativa' || b.status === 'trial';
   const roleLocal = mapearRole(b.role);
 
-  const existing = await queryOne(`SELECT id FROM usuarios WHERE id = $1`, [b.usuario_id]);
+  // Procura primeiro por central_uuid, depois por email
+  let existing = await queryOne(`SELECT id FROM usuarios WHERE central_uuid = $1`, [b.usuario_id]);
+  if (!existing) existing = await queryOne(`SELECT id FROM usuarios WHERE email = $1`, [b.email]);
+
   if (existing) {
     await query(
-      `UPDATE usuarios SET email=$2, nome=$3, role=$4::user_role, ativo=$5, atualizado_em=NOW()
-       WHERE id=$1`,
-      [b.usuario_id, b.email, b.nome, roleLocal, ativo]
+      `UPDATE usuarios SET central_uuid=$1, email=$2, nome=$3, role=$4::user_role, ativo=$5, atualizado_em=NOW()
+       WHERE id=$6`,
+      [b.usuario_id, b.email, b.nome, roleLocal, ativo, existing.id]
     );
   } else {
-    const porEmail = await queryOne(`SELECT id FROM usuarios WHERE email = $1`, [b.email]);
-    if (porEmail) {
-      // Vincula o id central ao usuario existente por email
-      await query(
-        `UPDATE usuarios SET id=$1, nome=$2, role=$3::user_role, ativo=$4, atualizado_em=NOW()
-         WHERE id=$5`,
-        [b.usuario_id, b.nome, roleLocal, ativo, porEmail.id]
-      );
-    } else {
-      await query(
-        `INSERT INTO usuarios (id, email, senha_hash, nome, role, ativo)
-         VALUES ($1, $2, '!central!', $3, $4::user_role, $5)`,
-        [b.usuario_id, b.email, b.nome, roleLocal, ativo]
-      );
-    }
+    await query(
+      `INSERT INTO usuarios (central_uuid, email, senha_hash, nome, role, ativo)
+       VALUES ($1, $2, '!central!', $3, $4::user_role, $5)`,
+      [b.usuario_id, b.email, b.nome, roleLocal, ativo]
+    );
   }
   res.json({ ok: true, usuario_id: b.usuario_id });
 });
