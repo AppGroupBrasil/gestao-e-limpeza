@@ -34,11 +34,21 @@ router.post('/usuario', async (req: Request, res: Response) => {
       [b.usuario_id, b.email, b.nome, roleLocal, ativo]
     );
   } else {
-    await query(
-      `INSERT INTO usuarios (id, email, senha_hash, nome, role, ativo)
-       VALUES ($1, $2, '!central!', $3, $4::user_role, $5)`,
-      [b.usuario_id, b.email, b.nome, roleLocal, ativo]
-    );
+    const porEmail = await queryOne(`SELECT id FROM usuarios WHERE email = $1`, [b.email]);
+    if (porEmail) {
+      // Vincula o id central ao usuario existente por email
+      await query(
+        `UPDATE usuarios SET id=$1, nome=$2, role=$3::user_role, ativo=$4, atualizado_em=NOW()
+         WHERE id=$5`,
+        [b.usuario_id, b.nome, roleLocal, ativo, porEmail.id]
+      );
+    } else {
+      await query(
+        `INSERT INTO usuarios (id, email, senha_hash, nome, role, ativo)
+         VALUES ($1, $2, '!central!', $3, $4::user_role, $5)`,
+        [b.usuario_id, b.email, b.nome, roleLocal, ativo]
+      );
+    }
   }
   res.json({ ok: true, usuario_id: b.usuario_id });
 });
