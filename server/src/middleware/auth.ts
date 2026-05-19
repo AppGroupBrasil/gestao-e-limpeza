@@ -1,7 +1,18 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
-import { queryOne } from '../db/database.js';
+import { queryOne, query } from '../db/database.js';
 import { cacheGet, cacheSet, cacheDel } from '../db/database.js';
+
+const APP_SLUG = 'gestao-limpeza';
+const STATUS_VALIDOS_LICENCA = new Set(['ativa', 'trial']);
+
+function mapearRoleCentral(role: string): string {
+  const r = (role || '').toLowerCase();
+  if (r === 'superadmin' || r === 'master') return 'master';
+  if (r === 'admin' || r === 'administrador') return 'administrador';
+  if (r === 'supervisor') return 'supervisor';
+  return 'funcionario';
+}
 
 const JWT_SECRET: string = process.env.JWT_SECRET || '';
 const WEAK_JWT_SECRETS = new Set([
@@ -61,7 +72,33 @@ export async function authMiddleware(req: AuthRequest, res: Response, next: Next
   }
 
   try {
-    const decoded = verifyToken(header.slice(7));
+    const raw: any = jwt.verify(header.slice(7), JWT_SECRET);
+    const userId: string = raw.userId || raw.sub;
+
+    // Token do auth-central traz apps[]
+    if (Array.isArray(raw.apps)) {
+      const licenca = raw.apps.find((a: any) => a.slug === APP_SLUG);
+      if (!licenca || !STATUS_VALIDOS_LICENCA.has(licenca.status)) {
+        res.status(403).json({ error: 'Sem licença ativa para Gestão e Limpeza' });
+        return;
+      }
+      if (licenca.expira_em && new Date(licenca.expira_em) < new Date()) {
+        res.status(403).json({ error: 'Licença expirada' });
+        return;
+      }
+      const existing = await queryOne(`SELECT id FROM usuarios WHERE id = $1`, [userId]);
+      if (!existing) {
+        await query(
+          `INSERT INTO usuarios (id, email, senha_hash, nome, role, ativo)
+           VALUES ($1, $2, '!central!', $3, $4::user_role, true)
+           ON CONFLICT (id) DO NOTHING`,
+          [userId, raw.email, raw.nome || raw.email, mapearRoleCentral(licenca.role)]
+        );
+        cacheDel(`auth:${userId}`);
+      }
+    }
+
+    const decoded = { userId, email: raw.email, role: raw.role || '' } as JwtPayload;
 
     // Cache user data for 30s — avoids DB hit on every single request
     const cacheKey = `auth:${decoded.userId}`;
