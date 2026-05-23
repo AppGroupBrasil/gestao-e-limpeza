@@ -360,9 +360,8 @@ const LandingPage: React.FC = () => {
 
           <div className={styles.planosGrid}>
             {[
-              { preco: '199', usuarios: '3', descricao: 'Ideal para condomínios pequenos com equipe reduzida' },
-              { preco: '299', usuarios: '5', descricao: 'Perfeito para operações de médio porte' },
-              { preco: '399', usuarios: '10', descricao: 'Para grandes operações com múltiplas equipes' },
+              { preco: '199', usuarios: 'ilimitados', descricao: '1 condomínio · usuários ilimitados' },
+              { preco: '350', usuarios: 'ilimitados', descricao: 'Administradoras e terceirizadas · condomínios ilimitados' },
             ].map((plano, i) => (
               <div key={i} className={styles.planoCard}>
                 <h3 className={styles.planoNome}>Plano</h3>
@@ -425,9 +424,8 @@ const LandingPage: React.FC = () => {
 
           <div className={contratoStyles.contratoGrid}>
             {[
-              { preco: '199', usuarios: '3', descricao: 'Ideal para condomínios pequenos com equipe reduzida' },
-              { preco: '299', usuarios: '5', descricao: 'Perfeito para operações de médio porte' },
-              { preco: '399', usuarios: '10', descricao: 'Para grandes operações com múltiplas equipes' },
+              { preco: '199', usuarios: 'ilimitados', descricao: '1 condomínio · usuários ilimitados' },
+              { preco: '350', usuarios: 'ilimitados', descricao: 'Administradoras e terceirizadas · condomínios ilimitados' },
             ].map((plano, i) => (
               <div
                 key={i}
