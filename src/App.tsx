@@ -36,6 +36,7 @@ const ComunicadosPage = React.lazy(() => import('./pages/Comunicados/Comunicados
 const QuadroAtividadesPage = React.lazy(() => import('./pages/QuadroAtividades/QuadroAtividadesPage'));
 const CadastroPage = React.lazy(() => import('./pages/Auth/CadastroPage'));
 const EsqueciSenhaPage = React.lazy(() => import('./pages/Auth/EsqueciSenhaPage'));
+const SsoPage = React.lazy(() => import('./pages/Auth/SsoPage'));
 const PerfilPage = React.lazy(() => import('./pages/Perfil/PerfilPage'));
 const NotificacoesPage = React.lazy(() => import('./pages/Notificacoes/NotificacoesPage'));
 const AuditoriaPage = React.lazy(() => import('./pages/Auditoria/AuditoriaPage'));
@@ -118,6 +119,7 @@ const App: React.FC = () => {
       <Route path="/bloqueado" element={<BloqueadoPage />} />
       <Route path="/cadastro" element={<CadastroPage />} />
       <Route path="/esqueci-senha" element={<EsqueciSenhaPage />} />
+      <Route path="/sso" element={<SsoPage />} />
 
       {/* Rotas protegidas do sistema */}
       <Route element={

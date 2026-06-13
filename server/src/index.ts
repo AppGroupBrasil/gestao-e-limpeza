@@ -20,6 +20,7 @@ import { logger } from './services/logger.js';
 import { sendMail, isMailerConfigured, buildRespostaPdf } from './services/mailer.js';
 import authRoutes from './routes/auth.js';
 import provisioningRoutes from './routes/provisioning.js';
+import ssoRoutes from './routes/sso.js';
 import condominiosRoutes from './routes/condominios.js';
 import ordensServicoRoutes from './routes/ordensServico.js';
 import checklistsRoutes from './routes/checklists.js';
@@ -115,6 +116,7 @@ const publicReadLimiter = rateLimit({
 // ── Rotas públicas ──
 app.use('/api/auth', authRoutes);
 app.use('/api/provisioning', provisioningRoutes);
+app.use('/api/sso', ssoRoutes);
 
 // ── QR Code público (sem auth) ──
 app.get('/api/public/qrcodes/:id', publicReadLimiter, async (req, res) => {
