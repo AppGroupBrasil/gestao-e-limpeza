@@ -360,11 +360,11 @@ const LandingPage: React.FC = () => {
 
           <div className={styles.planosGrid}>
             {[
-              { preco: '199', usuarios: 'ilimitados', descricao: '1 condomínio · usuários ilimitados' },
-              { preco: '350', usuarios: 'ilimitados', descricao: 'Administradoras e terceirizadas · condomínios ilimitados' },
+              { nome: 'Por Condomínio', preco: '199', descricao: '1 condomínio · usuários ilimitados' },
+              { nome: 'Administradoras e Facility', preco: '350', descricao: 'Condomínios e usuários ilimitados' },
             ].map((plano, i) => (
               <div key={i} className={styles.planoCard}>
-                <h3 className={styles.planoNome}>Plano</h3>
+                <h3 className={styles.planoNome}>{plano.nome}</h3>
                 <div className={styles.planoPreco}>
                   <span className={styles.planoCifrao}>R$</span>
                   <span className={styles.planoValor}>{plano.preco}</span>
@@ -372,7 +372,7 @@ const LandingPage: React.FC = () => {
                 </div>
                 <p className={styles.planoDesc}>{plano.descricao}</p>
                 <ul className={styles.planoFeatures}>
-                  <li><CheckCircle2 size={16} /> Até <strong>{plano.usuarios} usuários</strong></li>
+                  <li><CheckCircle2 size={16} /> <strong>Usuários ilimitados</strong></li>
                   <li><CheckCircle2 size={16} /> Todos os 22+ módulos</li>
                   <li><CheckCircle2 size={16} /> Suporte por WhatsApp</li>
                   <li><CheckCircle2 size={16} /> Atualizações inclusas</li>
@@ -424,8 +424,8 @@ const LandingPage: React.FC = () => {
 
           <div className={contratoStyles.contratoGrid}>
             {[
-              { preco: '199', usuarios: 'ilimitados', descricao: '1 condomínio · usuários ilimitados' },
-              { preco: '350', usuarios: 'ilimitados', descricao: 'Administradoras e terceirizadas · condomínios ilimitados' },
+              { nome: 'Por Condomínio', preco: '199', usuarios: 'ilimitados', descricao: '1 condomínio · usuários ilimitados' },
+              { nome: 'Administradoras e Facility', preco: '350', usuarios: 'ilimitados', descricao: 'Condomínios e usuários ilimitados' },
             ].map((plano, i) => (
               <div
                 key={i}
@@ -435,7 +435,7 @@ const LandingPage: React.FC = () => {
                 <div className={contratoStyles.contratoCardIcon}>
                   <FileText size={28} />
                 </div>
-                <span className={contratoStyles.contratoCardUsuarios}>Até {plano.usuarios} usuários</span>
+                <span className={contratoStyles.contratoCardUsuarios}>{plano.nome}</span>
                 <div className={contratoStyles.contratoCardPreco}>
                   <span className={contratoStyles.contratoCardCifrao}>R$</span>
                   <span className={contratoStyles.contratoCardValor}>{plano.preco}</span>
@@ -462,41 +462,6 @@ const LandingPage: React.FC = () => {
       {planoContrato && (
         <ContratoModal plano={planoContrato} onClose={() => setPlanoContrato(null)} />
       )}
-
-      {/* ═══ OUTROS SISTEMAS ═══ */}
-      <section className={styles.outrosSistemasSection}>
-        <div className={styles.sectionContainer}>
-          <div className={styles.sectionHeader}>
-            <span className={styles.sectionTag}>Ecossistema</span>
-            <h2 className={styles.sectionTitle}>Conheça Nossos Outros Sistemas</h2>
-            <p className={styles.sectionSubtitle}>Soluções completas para a gestão do seu condomínio</p>
-          </div>
-          <div className={styles.outrosSistemasGrid}>
-            <a href="https://gestaoelimpeza.com.br" target="_blank" rel="noopener noreferrer" className={styles.outrosSistemasCard}>
-              <img src="/logo-gestao.png" alt="Gestão e Limpeza" className={styles.outrosSistemasLogo} />
-              <span className={styles.outrosSistemasNome}>Gestão e Limpeza</span>
-              <span className={styles.outrosSistemasUrl}>gestaoelimpeza.com.br</span>
-            </a>
-            <a href="https://appcorrespondencia.com.br" target="_blank" rel="noopener noreferrer" className={styles.outrosSistemasCard}>
-              <img src="/logo-appcorrespondencia.png" alt="App Correspondência" className={styles.outrosSistemasLogo} />
-              <span className={styles.outrosSistemasNome}>App Correspondência</span>
-              <span className={styles.outrosSistemasUrl}>appcorrespondencia.com.br</span>
-            </a>
-            <a href="https://portariax.com.br" target="_blank" rel="noopener noreferrer" className={styles.outrosSistemasCard}>
-              <img src="/logo-portariax.png" alt="Portaria X" className={styles.outrosSistemasLogo} />
-              <span className={styles.outrosSistemasNome}>Portaria X</span>
-              <span className={styles.outrosSistemasUrl}>portariax.com.br</span>
-            </a>
-            <a href="https://manutencaox.com.br" target="_blank" rel="noopener noreferrer" className={styles.outrosSistemasCard}>
-              <img src="/logo-manutencaox.png" alt="ManutençãoX" className={styles.outrosSistemasLogo} />
-              <span className={styles.outrosSistemasNome}>ManutençãoX</span>
-              <span className={styles.outrosSistemasUrl}>manutencaox.com.br</span>
-            </a>
-          </div>
-
-
-        </div>
-      </section>
 
       {/* ═══ CTA FINAL ═══ */}
       <section className={styles.ctaSection}>

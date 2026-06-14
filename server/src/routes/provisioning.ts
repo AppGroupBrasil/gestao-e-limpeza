@@ -46,4 +46,32 @@ router.post('/usuario', async (req: Request, res: Response) => {
   res.json({ ok: true, usuario_id: b.usuario_id });
 });
 
+// Receiver do push de cadastro da central (Fase 2 SSO). Espelho read-only:
+// usuarios (casa por email). upsert atualiza nome; delete revoga (ativo=false).
+router.post('/cadastro', async (req: Request, res: Response) => {
+  const secret = req.headers['x-provisioning-secret'];
+  const expected = process.env.PROVISIONING_SECRET;
+  if (!expected || secret !== expected) {
+    res.status(403).json({ error: 'Assinatura inválida' });
+    return;
+  }
+  const ev = req.body || {};
+  const d = ev.dados || {};
+  if (ev.entidade === 'morador' || ev.entidade === 'funcionario') {
+    const email = String(d.email || '').toLowerCase().trim();
+    if (!email) { res.json({ ok: true, ignorado: 'sem email' }); return; }
+    if (ev.acao === 'delete') {
+      await query(`UPDATE usuarios SET ativo=false, atualizado_em=NOW() WHERE lower(email)=$1`, [email]);
+      res.json({ ok: true });
+      return;
+    }
+    if (d.nome) {
+      await query(`UPDATE usuarios SET nome=$1, ativo=true, atualizado_em=NOW() WHERE lower(email)=$2`, [d.nome, email]);
+    }
+    res.json({ ok: true });
+    return;
+  }
+  res.json({ ok: true, ignorado: ev.entidade });
+});
+
 export default router;

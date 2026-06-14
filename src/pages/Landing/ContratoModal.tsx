@@ -3,6 +3,7 @@ import { X, Printer, Share2 } from 'lucide-react';
 import styles from './Contrato.module.css';
 
 interface PlanoSelecionado {
+  nome: string;
   preco: string;
   usuarios: string;
   descricao: string;
@@ -72,7 +73,7 @@ const ContratoModal: React.FC<ContratoModalProps> = ({ plano, onClose }) => {
   };
 
   const handleShare = async () => {
-    const texto = `Contrato de Prestação de Serviços - Gestão e Limpeza\n\nPlano: R$${plano.preco}/mês (até ${plano.usuarios} usuários)\n\nPara mais detalhes, acesse: ${window.location.origin}`;
+    const texto = `Contrato de Prestação de Serviços - Gestão e Limpeza\n\nPlano ${plano.nome}: R$${plano.preco}/mês\n${plano.descricao}\n\nPara mais detalhes, acesse: ${window.location.origin}`;
 
     if (navigator.share) {
       try {
@@ -185,13 +186,13 @@ const ContratoModal: React.FC<ContratoModalProps> = ({ plano, onClose }) => {
 
             <h3>CLÁUSULA 2ª — DO PLANO E VALOR</h3>
             <p className={styles.clausula}>
-              A CONTRATANTE adere ao plano de <strong>até {plano.usuarios} usuários</strong>, pelo valor mensal de{' '}
+              A CONTRATANTE adere ao plano <strong>{plano.nome}</strong> ({plano.descricao}), pelo valor mensal de{' '}
               <strong>R$ {plano.preco},00</strong> (
               {plano.preco === '199'
                 ? 'cento e noventa e nove reais'
-                : plano.preco === '299'
-                ? 'duzentos e noventa e nove reais'
-                : 'trezentos e noventa e nove reais'}
+                : plano.preco === '350'
+                ? 'trezentos e cinquenta reais'
+                : `${plano.preco} reais`}
               ), com vencimento todo dia 10 de cada mês.
             </p>
 
