@@ -103,18 +103,10 @@ router.post('/login', loginLimiter, async (req, res: Response) => {
       return;
     }
 
-    const isMaster = user?.role === 'master';
-
     if (!user) {
       await recordLoginAttempt(email, ip, false);
       console.warn(`[LOGIN FAIL] email=${email} ip=${ip} - user not found`);
       res.status(401).json({ error: buildLoginFailMsg(remaining), remaining: remaining - 1 });
-      return;
-    }
-    // Block check (skip for master)
-    if (!isMaster && (!user.ativo || user.bloqueado)) {
-      console.warn(`[LOGIN FAIL] email=${email} ip=${ip} - account inactive/blocked (ativo=${user.ativo}, bloqueado=${user.bloqueado})`);
-      res.status(403).json({ error: 'Conta desativada ou bloqueada', motivo: user.motivo_bloqueio });
       return;
     }
 
@@ -123,6 +115,13 @@ router.post('/login', loginLimiter, async (req, res: Response) => {
       await recordLoginAttempt(email, ip, false);
       console.warn(`[LOGIN FAIL] email=${email} ip=${ip} - wrong password`);
       res.status(401).json({ error: buildLoginFailMsg(remaining), remaining: remaining - 1 });
+      return;
+    }
+
+    // Block check só após senha válida — não revela estado da conta a terceiros
+    if (!user.ativo || user.bloqueado) {
+      console.warn(`[LOGIN FAIL] email=${email} ip=${ip} - account inactive/blocked (ativo=${user.ativo}, bloqueado=${user.bloqueado})`);
+      res.status(403).json({ error: 'Conta desativada ou bloqueada', motivo: user.motivo_bloqueio });
       return;
     }
 
@@ -228,6 +227,14 @@ router.get('/me', authMiddleware, async (req: AuthRequest, res: Response) => {
 router.post('/change-password', authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
     const { senhaAtual, novaSenha } = req.body;
+    if (!senhaAtual || !novaSenha) {
+      res.status(400).json({ error: 'Senha atual e nova senha são obrigatórias' });
+      return;
+    }
+    if (typeof novaSenha !== 'string' || novaSenha.length < 6) {
+      res.status(400).json({ error: 'A nova senha deve ter no mínimo 6 caracteres' });
+      return;
+    }
     const user = await queryOne<any>('SELECT senha_hash FROM usuarios WHERE id = $1', [req.user!.id]);
 
     const valid = await bcrypt.compare(senhaAtual, user!.senha_hash);

@@ -25,6 +25,7 @@ RUN rm /etc/nginx/conf.d/default.conf
 
 # Copy custom nginx config
 COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY security-headers.conf /etc/nginx/security-headers.conf
 
 # Copy built files and ensure proper permissions
 COPY --from=builder /app/dist /usr/share/nginx/html

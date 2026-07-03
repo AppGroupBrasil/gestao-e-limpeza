@@ -149,7 +149,7 @@ const DIFERENCIAIS = [
 const LandingPage: React.FC = () => {
   const navigate = useNavigate();
   const [menuAberto, setMenuAberto] = useState(false);
-  const [planoContrato, setPlanoContrato] = useState<{ preco: string; usuarios: string; descricao: string } | null>(null);
+  const [planoContrato, setPlanoContrato] = useState<{ nome: string; preco: string; usuarios: string; descricao: string } | null>(null);
 
   const scrollTo = (id: string) => {
     setMenuAberto(false);

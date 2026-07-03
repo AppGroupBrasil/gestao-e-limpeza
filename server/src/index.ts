@@ -95,7 +95,8 @@ app.use(cors({
   },
   credentials: true,
 }));
-app.use(express.json({ limit: '2mb' }));
+// 6mb: cobre selfie de ronda em base64 (limite anunciado de 3MB ≈ 4M chars) + JSON
+app.use(express.json({ limit: '6mb' }));
 app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
 
 // ── Rate limiters ──

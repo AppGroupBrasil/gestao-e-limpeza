@@ -5,7 +5,13 @@ import { Pool, PoolClient } from 'pg';
 // With 50 condos, ~30-50 concurrent users at peak → ~60-100 connections needed
 const POOL_MAX = Number.parseInt(process.env.DB_POOL_MAX || '80');
 const DATABASE_URL = process.env.DATABASE_URL?.trim();
-const useSsl = process.env.DB_SSL === 'false' ? false : { rejectUnauthorized: false };
+// DB_SSL_CA (conteúdo PEM) ou DB_SSL_REJECT_UNAUTHORIZED=true habilitam validação do certificado
+const sslCa = process.env.DB_SSL_CA?.trim();
+const useSsl = process.env.DB_SSL === 'false'
+  ? false
+  : sslCa
+    ? { ca: sslCa, rejectUnauthorized: true }
+    : { rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED === 'true' };
 
 const pool = new Pool({
   ...(DATABASE_URL

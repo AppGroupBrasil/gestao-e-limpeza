@@ -1,7 +1,16 @@
 import { Router, Request, Response } from 'express';
+import crypto from 'node:crypto';
 import { query, queryOne } from '../db/database.js';
 
 const router = Router();
+
+function secretValido(recebido: unknown): boolean {
+  const expected = process.env.PROVISIONING_SECRET;
+  if (!expected || typeof recebido !== 'string') return false;
+  const a = Buffer.from(recebido);
+  const b = Buffer.from(expected);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
 
 function mapearRole(role: string): string {
   const r = (role || '').toLowerCase();
@@ -12,9 +21,7 @@ function mapearRole(role: string): string {
 }
 
 router.post('/usuario', async (req: Request, res: Response) => {
-  const secret = req.headers['x-provisioning-secret'];
-  const expected = process.env.PROVISIONING_SECRET;
-  if (!expected || secret !== expected) {
+  if (!secretValido(req.headers['x-provisioning-secret'])) {
     res.status(403).json({ error: 'Assinatura inválida' });
     return;
   }
@@ -49,9 +56,7 @@ router.post('/usuario', async (req: Request, res: Response) => {
 // Receiver do push de cadastro da central (Fase 2 SSO). Espelho read-only:
 // usuarios (casa por email). upsert atualiza nome; delete revoga (ativo=false).
 router.post('/cadastro', async (req: Request, res: Response) => {
-  const secret = req.headers['x-provisioning-secret'];
-  const expected = process.env.PROVISIONING_SECRET;
-  if (!expected || secret !== expected) {
+  if (!secretValido(req.headers['x-provisioning-secret'])) {
     res.status(403).json({ error: 'Assinatura inválida' });
     return;
   }

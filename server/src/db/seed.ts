@@ -2,6 +2,19 @@ import bcrypt from 'bcrypt';
 import pool from './database.js';
 
 async function seed() {
+  const email = process.env.SEED_MASTER_EMAIL;
+  const senha = process.env.SEED_MASTER_PASSWORD;
+  const nome = process.env.SEED_MASTER_NOME || 'Master Admin';
+
+  if (!email || !senha) {
+    console.error('Defina SEED_MASTER_EMAIL e SEED_MASTER_PASSWORD para criar o usuário master.');
+    process.exit(1);
+  }
+  if (senha.length < 12) {
+    console.error('SEED_MASTER_PASSWORD deve ter no mínimo 12 caracteres.');
+    process.exit(1);
+  }
+
   const client = await pool.connect();
   try {
     // Verificar se master já existe
@@ -11,14 +24,13 @@ async function seed() {
       return;
     }
 
-    const senhaHash = await bcrypt.hash('master123', 12);
+    const senhaHash = await bcrypt.hash(senha, 12);
     await client.query(
       `INSERT INTO usuarios (email, senha_hash, nome, role, criado_por)
        VALUES ($1, $2, $3, 'master', NULL)`,
-      ['master@gestao.com', senhaHash, 'Master Admin']
+      [email, senhaHash, nome]
     );
-    console.log('Usuário master criado: master@gestao.com / master123');
-    console.log('⚠️  TROQUE A SENHA APÓS O PRIMEIRO LOGIN!');
+    console.log(`Usuário master criado: ${email}`);
   } finally {
     client.release();
     await pool.end();

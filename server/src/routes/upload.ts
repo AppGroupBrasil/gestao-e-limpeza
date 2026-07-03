@@ -32,6 +32,16 @@ const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
 });
 
+// Valida o conteúdo real do arquivo (mimetype do multer é declarado pelo cliente)
+function detectarTipoReal(buf: Buffer): string | null {
+  if (buf.length < 12) return null;
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return '.jpg';
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return '.png';
+  if (buf.subarray(0, 4).toString('ascii') === 'RIFF' && buf.subarray(8, 12).toString('ascii') === 'WEBP') return '.webp';
+  if (buf.subarray(0, 5).toString('ascii') === '%PDF-') return '.pdf';
+  return null;
+}
+
 const router = Router();
 
 // POST /api/upload/image
@@ -99,9 +109,11 @@ router.post('/document', upload.single('file'), async (req: AuthRequest, res: Re
       return;
     }
 
-    const rawExt = path.extname(req.file.originalname).toLowerCase();
-    const allowedExts = ['.pdf', '.jpg', '.jpeg', '.png', '.webp'];
-    const ext = allowedExts.includes(rawExt) ? rawExt : '.pdf';
+    const ext = detectarTipoReal(req.file.buffer);
+    if (!ext) {
+      res.status(400).json({ error: 'Arquivo inválido — apenas PDF, JPEG, PNG ou WebP' });
+      return;
+    }
     const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`;
     const filepath = path.join(UPLOADS_DIR, 'documentos', filename);
 

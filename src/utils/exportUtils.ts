@@ -1,10 +1,12 @@
 import { condominios as condominiosApi, configuracoes as configuracoesApi } from '../services/api';
 
+let _autoTable: any;
 async function loadJsPdf() {
-  const [{ default: jsPDF }] = await Promise.all([
+  const [{ default: jsPDF }, autoTableMod] = await Promise.all([
     import('jspdf'),
     import('jspdf-autotable'),
   ]);
+  _autoTable = autoTableMod.default;
   return jsPDF;
 }
 
@@ -737,7 +739,7 @@ function desenharTabela(pdf: any, tabela: PdfTableData, yInicial: number, titulo
     y += 6;
   }
 
-  pdf.autoTable({
+  _autoTable(pdf, {
     head: [tabela.headers],
     body: tabela.rows,
     startY: y,

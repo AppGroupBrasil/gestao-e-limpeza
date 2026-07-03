@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import rateLimit from 'express-rate-limit';
 import crypto from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import { query, queryOne } from '../db/database.js';
@@ -168,8 +169,16 @@ async function provisionarUsuario(claims: SsoClaims): Promise<DbUser> {
   return user;
 }
 
+const ssoLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Muitas requisições. Tente novamente em instantes.' },
+});
+
 // POST /api/sso  { token }  → troca o token da central pelo token PRÓPRIO do app
-router.post('/', async (req: Request, res: Response) => {
+router.post('/', ssoLimiter, async (req: Request, res: Response) => {
   const token = String(req.body?.token || '');
   if (!token) {
     res.status(400).json({ error: 'token ausente' });
