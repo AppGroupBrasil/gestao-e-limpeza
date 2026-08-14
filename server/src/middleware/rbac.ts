@@ -2,7 +2,7 @@ import { Response, NextFunction } from 'express';
 import { AuthRequest } from './auth.js';
 import { query, cacheGet, cacheSet } from '../db/database.js';
 
-const ROLE_LEVEL: Record<string, number> = {
+export const ROLE_LEVEL: Record<string, number> = {
   master: 4,
   administrador: 3,
   supervisor: 2,
@@ -39,6 +39,18 @@ export function requireMinRole(minRole: string) {
     }
     next();
   };
+}
+
+/**
+ * Identidade do tenant para configurações isoladas por cliente
+ * (tema, permissões, e-mails de vencimento, chaves gerais).
+ * master → 'global' (padrões da plataforma); demais → o administrador dono da conta.
+ */
+export function getTenantId(user: AuthRequest['user']): string {
+  if (!user) return 'global';
+  if (user.role === 'master') return 'global';
+  if (user.role === 'administrador') return user.id;
+  return user.administrador_id || 'global';
 }
 
 /**

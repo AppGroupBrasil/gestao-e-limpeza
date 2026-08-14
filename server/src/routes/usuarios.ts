@@ -2,8 +2,9 @@ import { Router, Response } from 'express';
 import bcrypt from 'bcrypt';
 import { query, queryOne, execute, withTransaction, cacheDel } from '../db/database.js';
 import { AuthRequest, invalidateUserCache } from '../middleware/auth.js';
-import { requireMinRole } from '../middleware/rbac.js';
+import { requireMinRole, ROLE_LEVEL } from '../middleware/rbac.js';
 import { isMailerConfigured, sendMail } from '../services/mailer.js';
+import { escapeHtml } from '../utils/html.js';
 
 function buildNovoCadastroHtml(novoNome: string, novoEmail: string, novoRole: string, criadoPor: string): string {
   const roleLabels: Record<string, string> = {
@@ -17,10 +18,10 @@ function buildNovoCadastroHtml(novoNome: string, novoEmail: string, novoRole: st
           Um novo usuário foi cadastrado no sistema <strong>Gestão e Limpeza</strong>.
         </p>
         <table style="width:100%;border-collapse:collapse;margin:16px 0;">
-          <tr><td style="padding:8px 12px;font-weight:bold;color:#6b7280;">Nome</td><td style="padding:8px 12px;">${novoNome}</td></tr>
-          <tr style="background:#f9fafb;"><td style="padding:8px 12px;font-weight:bold;color:#6b7280;">E-mail</td><td style="padding:8px 12px;">${novoEmail}</td></tr>
-          <tr><td style="padding:8px 12px;font-weight:bold;color:#6b7280;">Perfil</td><td style="padding:8px 12px;">${roleLabels[novoRole] || novoRole}</td></tr>
-          <tr style="background:#f9fafb;"><td style="padding:8px 12px;font-weight:bold;color:#6b7280;">Cadastrado por</td><td style="padding:8px 12px;">${criadoPor}</td></tr>
+          <tr><td style="padding:8px 12px;font-weight:bold;color:#6b7280;">Nome</td><td style="padding:8px 12px;">${escapeHtml(novoNome)}</td></tr>
+          <tr style="background:#f9fafb;"><td style="padding:8px 12px;font-weight:bold;color:#6b7280;">E-mail</td><td style="padding:8px 12px;">${escapeHtml(novoEmail)}</td></tr>
+          <tr><td style="padding:8px 12px;font-weight:bold;color:#6b7280;">Perfil</td><td style="padding:8px 12px;">${escapeHtml(roleLabels[novoRole] || novoRole)}</td></tr>
+          <tr style="background:#f9fafb;"><td style="padding:8px 12px;font-weight:bold;color:#6b7280;">Cadastrado por</td><td style="padding:8px 12px;">${escapeHtml(criadoPor)}</td></tr>
         </table>
         <p style="margin:16px 0 0;font-size:13px;color:#9ca3af;">Este é um e-mail automático do sistema Gestão e Limpeza.</p>
       </div>
@@ -50,6 +51,19 @@ function resolveAdminId(caller: { role: string; id: string; administrador_id?: s
   if (caller.role === 'master') return null;
   if (caller.role === 'administrador') return caller.id;
   return caller.administrador_id ?? null;
+}
+
+/** Leitura de um usuário: master vê todos; demais só a si mesmo e a própria hierarquia */
+function podeVerUsuario(
+  caller: NonNullable<AuthRequest['user']>,
+  alvo: { id: string; administrador_id: string | null; supervisor_id: string | null; role: string }
+): boolean {
+  if (caller.role === 'master') return true;
+  if (alvo.id === caller.id) return true;
+  const adminId = resolveAdminId(caller);
+  if (adminId && alvo.administrador_id === adminId) return true;
+  if (caller.role === 'supervisor' && alvo.supervisor_id === caller.id) return true;
+  return alvo.administrador_id === null && alvo.role === 'funcionario';
 }
 
 // POST /api/usuarios
@@ -154,12 +168,14 @@ router.get('/', requireMinRole('supervisor'), async (req: AuthRequest, res: Resp
 // GET /api/usuarios/:id
 router.get('/:id', async (req: AuthRequest, res: Response) => {
   try {
-  const row = await queryOne(
+  const caller = req.user!;
+  const row = await queryOne<any>(
     `SELECT id, email, nome, role, ativo, bloqueado, motivo_bloqueio, administrador_id, supervisor_id, condominio_id, avatar_url, telefone, cargo, criado_em
      FROM usuarios WHERE id = $1`,
     [req.params.id]
   );
   if (!row) { res.status(404).json({ error: 'Usuário não encontrado' }); return; }
+  if (!podeVerUsuario(caller, row)) { res.status(403).json({ error: 'Sem permissão para este usuário' }); return; }
   res.json(row);
   } catch (err: any) {
     console.error('GET /usuarios/:id erro:', err.message);
@@ -171,22 +187,55 @@ router.get('/:id', async (req: AuthRequest, res: Response) => {
 router.put('/:id', requireMinRole('administrador'), async (req: AuthRequest, res: Response) => {
   try {
   const caller = req.user!;
+  const target = await queryOne<any>('SELECT id, administrador_id, supervisor_id, role FROM usuarios WHERE id = $1', [req.params.id]);
+  if (!target) { res.status(404).json({ error: 'Usuário não encontrado' }); return; }
+
   // Verify target belongs to caller's hierarchy
   if (caller.role !== 'master') {
-    const target = await queryOne<any>('SELECT administrador_id, role FROM usuarios WHERE id = $1', [req.params.id]);
-    if (!target) { res.status(404).json({ error: 'Usuário não encontrado' }); return; }
     const isOwner = target.administrador_id === caller.id;
+    const isSelf = target.id === caller.id;
     const isOrphan = target.administrador_id === null && target.role === 'funcionario';
-    if (!isOwner && !isOrphan) {
+    if (!isOwner && !isSelf && !isOrphan) {
       res.status(403).json({ error: 'Sem permissão para este usuário' });
       return;
     }
   }
+
+  const callerLevel = ROLE_LEVEL[caller.role] ?? 0;
+  const isSelf = target.id === caller.id;
+  if (!isSelf && (ROLE_LEVEL[target.role] ?? 0) >= callerLevel) {
+    res.status(403).json({ error: 'Não pode editar usuário com role igual ou superior' });
+    return;
+  }
+
   const { nome, role, ativo, condominioId, supervisorId, telefone, cargo } = req.body;
+
+  if (role !== undefined && role !== target.role) {
+    if (isSelf) { res.status(403).json({ error: 'Não pode alterar o próprio perfil de acesso' }); return; }
+    if ((ROLE_LEVEL[role] ?? 0) >= callerLevel) {
+      res.status(403).json({ error: 'Não pode atribuir role igual ou superior ao seu' });
+      return;
+    }
+  }
+  if (ativo === false && isSelf) { res.status(403).json({ error: 'Não pode desativar a própria conta' }); return; }
+
+  // Só atualiza o que veio no corpo — campos ausentes preservam o valor atual
+  const campos: Record<string, any> = {};
+  if (nome !== undefined) campos.nome = String(nome).trim().slice(0, 255);
+  if (role !== undefined) campos.role = role;
+  if (ativo !== undefined) campos.ativo = !!ativo;
+  if (condominioId !== undefined) campos.condominio_id = condominioId || null;
+  if (supervisorId !== undefined) campos.supervisor_id = supervisorId || null;
+  if (telefone !== undefined) campos.telefone = telefone || null;
+  if (cargo !== undefined) campos.cargo = cargo || null;
+
+  const chaves = Object.keys(campos);
+  if (chaves.length === 0) { res.status(400).json({ error: 'Nenhum campo para atualizar' }); return; }
+
   const row = await queryOne(
-    `UPDATE usuarios SET nome=$1, role=$2, ativo=$3, condominio_id=$4, supervisor_id=$5, telefone=$6, cargo=$7
-     WHERE id=$8 RETURNING id, email, nome, role, ativo, condominio_id, supervisor_id`,
-    [nome, role, ativo, condominioId, supervisorId, telefone, cargo, req.params.id]
+    `UPDATE usuarios SET ${chaves.map((k, i) => `${k}=$${i + 1}`).join(', ')}
+     WHERE id=$${chaves.length + 1} RETURNING id, email, nome, role, ativo, condominio_id, supervisor_id`,
+    [...chaves.map(k => campos[k]), req.params.id]
   );
   if (!row) { res.status(404).json({ error: 'Usuário não encontrado' }); return; }
   invalidateUserCache(req.params.id);

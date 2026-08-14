@@ -26,11 +26,21 @@ const selfRegisterLimiter = rateLimit({
   message: { error: 'Muitas tentativas de cadastro. Aguarde 1 hora.' },
 });
 import { query, queryOne } from '../db/database.js';
-import { generateToken, AuthRequest, authMiddleware } from '../middleware/auth.js';
+import { generateToken, AuthRequest, authMiddleware, invalidateUserCache } from '../middleware/auth.js';
 import { checkRateLimit, recordLoginAttempt, auditLog, createNotification } from '../middleware/helpers.js';
 import { isMailerConfigured, sendMail } from '../services/mailer.js';
+import { escapeHtml } from '../utils/html.js';
 
 const router = Router();
+
+// Cadastro público de administrador — desligue com SELF_REGISTER=false quando as contas
+// passarem a ser criadas apenas pelo master/central.
+const SELF_REGISTER_ENABLED = (process.env.SELF_REGISTER ?? 'true').toLowerCase() !== 'false';
+
+/** Reset tokens são guardados apenas como hash — vazamento do banco não permite trocar senhas */
+function hashResetToken(token: string): string {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
 
 function buildSelfRegisterHtml(nome: string, email: string): string {
   return `
@@ -41,8 +51,8 @@ function buildSelfRegisterHtml(nome: string, email: string): string {
           Um novo administrador se cadastrou na plataforma <strong>Gestão e Limpeza</strong>.
         </p>
         <table style="width:100%;border-collapse:collapse;margin:16px 0;">
-          <tr><td style="padding:8px 12px;font-weight:bold;color:#6b7280;">Nome</td><td style="padding:8px 12px;">${nome}</td></tr>
-          <tr style="background:#f9fafb;"><td style="padding:8px 12px;font-weight:bold;color:#6b7280;">E-mail</td><td style="padding:8px 12px;">${email}</td></tr>
+          <tr><td style="padding:8px 12px;font-weight:bold;color:#6b7280;">Nome</td><td style="padding:8px 12px;">${escapeHtml(nome)}</td></tr>
+          <tr style="background:#f9fafb;"><td style="padding:8px 12px;font-weight:bold;color:#6b7280;">E-mail</td><td style="padding:8px 12px;">${escapeHtml(email)}</td></tr>
           <tr><td style="padding:8px 12px;font-weight:bold;color:#6b7280;">Perfil</td><td style="padding:8px 12px;">Administrador</td></tr>
         </table>
         <p style="margin:16px 0 0;font-size:13px;color:#9ca3af;">Este é um e-mail automático do sistema Gestão e Limpeza.</p>
@@ -55,7 +65,7 @@ function buildResetPasswordHtml(nome: string, resetUrl: string): string {
     <div style="font-family:Arial,sans-serif;background:#f5f7fa;padding:24px;color:#1f2937;">
       <div style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:16px;padding:32px;border:1px solid #e5e7eb;">
         <h1 style="margin:0 0 16px;font-size:24px;color:#111827;">Redefinição de senha</h1>
-        <p style="margin:0 0 12px;line-height:1.6;">Olá, ${nome || 'usuário'}.</p>
+        <p style="margin:0 0 12px;line-height:1.6;">Olá, ${escapeHtml(nome || 'usuário')}.</p>
         <p style="margin:0 0 20px;line-height:1.6;">Recebemos uma solicitação para redefinir a senha da sua conta no Gestão e Limpeza.</p>
         <a href="${resetUrl}" style="display:inline-block;background:#f57c00;color:#ffffff;text-decoration:none;padding:12px 20px;border-radius:10px;font-weight:700;">Redefinir senha</a>
         <p style="margin:20px 0 0;line-height:1.6;">Se o botão não funcionar, copie e cole este link no navegador:</p>
@@ -244,8 +254,10 @@ router.post('/change-password', authMiddleware, async (req: AuthRequest, res: Re
     }
 
     const hash = await bcrypt.hash(novaSenha, 12);
-    await query('UPDATE usuarios SET senha_hash = $1 WHERE id = $2', [hash, req.user!.id]);
-    res.json({ ok: true });
+    await query('UPDATE usuarios SET senha_hash = $1, senha_alterada_em = NOW() WHERE id = $2', [hash, req.user!.id]);
+    invalidateUserCache(req.user!.id);
+    const novoToken = generateToken({ userId: req.user!.id, email: req.user!.email, role: req.user!.role });
+    res.json({ ok: true, token: novoToken });
   } catch (err: any) {
     console.error('[CHANGE-PASSWORD ERROR]', err.message);
     res.status(500).json({ error: 'Erro ao alterar senha' });
@@ -255,14 +267,25 @@ router.post('/change-password', authMiddleware, async (req: AuthRequest, res: Re
 // POST /api/auth/self-register (public — creates 'administrador' account)
 router.post('/self-register', selfRegisterLimiter, async (req, res: Response) => {
   try {
-    const { email, senha, nome, telefone } = req.body;
+    if (!SELF_REGISTER_ENABLED) {
+      res.status(403).json({ error: 'Cadastro público desativado. Solicite acesso ao administrador.' });
+      return;
+    }
+
+    const { senha, telefone } = req.body;
+    const email = String(req.body.email || '').trim().toLowerCase();
+    const nome = String(req.body.nome || '').trim().slice(0, 255);
 
     if (!email || !senha || !nome) {
       res.status(400).json({ error: 'Email, senha e nome são obrigatórios' });
       return;
     }
-    if (senha.length < 6) {
-      res.status(400).json({ error: 'A senha deve ter no mínimo 6 caracteres' });
+    if (!/^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(email)) {
+      res.status(400).json({ error: 'E-mail inválido' });
+      return;
+    }
+    if (typeof senha !== 'string' || senha.length < 8 || !/[a-zA-Z]/.test(senha) || !/[0-9]/.test(senha)) {
+      res.status(400).json({ error: 'A senha deve ter no mínimo 8 caracteres, com letras e números' });
       return;
     }
 
@@ -337,9 +360,10 @@ router.post('/forgot-password', passwordResetLimiter, async (req, res: Response)
       // Invalidate previous tokens for this user
       await query('UPDATE reset_tokens SET used = true WHERE user_id = $1 AND used = false', [user.id]);
 
+      // Só o hash é persistido — o token em claro existe apenas no e-mail
       await query(
         'INSERT INTO reset_tokens (user_id, token, expires_at) VALUES ($1, $2, $3)',
-        [user.id, token, expiry]
+        [user.id, hashResetToken(token), expiry]
       );
 
       await sendMail({
@@ -375,7 +399,7 @@ router.post('/reset-password', passwordResetLimiter, async (req, res: Response) 
       `UPDATE reset_tokens SET used = true
        WHERE token = $1 AND used = false AND expires_at > NOW()
        RETURNING user_id`,
-      [token]
+      [hashResetToken(String(token))]
     );
 
     if (!record) {
@@ -384,7 +408,8 @@ router.post('/reset-password', passwordResetLimiter, async (req, res: Response) 
     }
 
     const hash = await bcrypt.hash(novaSenha, 12);
-    await query('UPDATE usuarios SET senha_hash = $1 WHERE id = $2', [hash, record.user_id]);
+    await query('UPDATE usuarios SET senha_hash = $1, senha_alterada_em = NOW() WHERE id = $2', [hash, record.user_id]);
+    invalidateUserCache(record.user_id);
 
     res.json({ message: 'Senha redefinida com sucesso! Você já pode fazer login.' });
   } catch (err: any) {

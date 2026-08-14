@@ -53,15 +53,16 @@ export interface AuthRequest extends Request {
     condominio_id: string | null;
     ativo: boolean;
     bloqueado: boolean;
+    senha_alterada_em?: string | Date | null;
   };
 }
 
 export function generateToken(payload: JwtPayload): string {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
+  return jwt.sign(payload, JWT_SECRET, { expiresIn: '7d', algorithm: 'HS256' });
 }
 
 export function verifyToken(token: string): JwtPayload {
-  return jwt.verify(token, JWT_SECRET) as JwtPayload;
+  return jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] }) as JwtPayload;
 }
 
 export async function authMiddleware(req: AuthRequest, res: Response, next: NextFunction) {
@@ -72,7 +73,7 @@ export async function authMiddleware(req: AuthRequest, res: Response, next: Next
   }
 
   try {
-    const raw: any = jwt.verify(header.slice(7), JWT_SECRET);
+    const raw: any = jwt.verify(header.slice(7), JWT_SECRET, { algorithms: ['HS256'] });
     let userId: string = raw.userId || raw.sub;
 
     // Token do auth-central traz apps[]
@@ -111,7 +112,7 @@ export async function authMiddleware(req: AuthRequest, res: Response, next: Next
     let user = cacheGet<AuthRequest['user']>(cacheKey);
     if (!user) {
       const dbUser = await queryOne(
-        `SELECT id, email, nome, role, administrador_id, supervisor_id, condominio_id, ativo, bloqueado
+        `SELECT id, email, nome, role, administrador_id, supervisor_id, condominio_id, ativo, bloqueado, senha_alterada_em
          FROM usuarios WHERE id = $1`,
         [decoded.userId]
       );
@@ -127,6 +128,14 @@ export async function authMiddleware(req: AuthRequest, res: Response, next: Next
       console.warn(`[AUTH MW] Account disabled: userId=${decoded.userId} ativo=${user.ativo} bloqueado=${user.bloqueado}`);
       res.status(403).json({ error: 'Conta desativada ou bloqueada' });
       return;
+    }
+    // Tokens emitidos antes da última troca de senha deixam de valer
+    if (user.senha_alterada_em && typeof raw.iat === 'number') {
+      const trocaEm = new Date(user.senha_alterada_em).getTime();
+      if (raw.iat * 1000 + 2000 < trocaEm) {
+        res.status(401).json({ error: 'Sessão expirada. Faça login novamente.' });
+        return;
+      }
     }
 
     req.user = user;

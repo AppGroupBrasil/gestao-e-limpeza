@@ -111,7 +111,11 @@ interface DbUser {
   condominio_id: string | null;
   ativo: boolean;
   bloqueado: boolean;
+  central_uuid: string | null;
+  senha_hash: string;
 }
+
+const CAMPOS_USER = 'id, email, nome, role, condominio_id, ativo, bloqueado, central_uuid, senha_hash';
 
 /** Upsert read-only do usuário pelos claims da central. Vínculo por central_uuid. */
 async function provisionarUsuario(claims: SsoClaims): Promise<DbUser> {
@@ -120,27 +124,35 @@ async function provisionarUsuario(claims: SsoClaims): Promise<DbUser> {
   const telefone = claims.telefone ? String(claims.telefone).replace(/\D/g, '').slice(0, 20) || null : null;
 
   // 1) localizar por central_uuid; legado: mesmo e-mail
-  let user = await queryOne<DbUser>('SELECT id, email, nome, role, condominio_id, ativo, bloqueado FROM usuarios WHERE central_uuid = $1', [claims.sub]);
+  let user = await queryOne<DbUser>(`SELECT ${CAMPOS_USER} FROM usuarios WHERE central_uuid = $1`, [claims.sub]);
   if (!user && email) {
-    user = await queryOne<DbUser>('SELECT id, email, nome, role, condominio_id, ativo, bloqueado FROM usuarios WHERE email = $1', [email]);
+    const porEmail = await queryOne<DbUser>(`SELECT ${CAMPOS_USER} FROM usuarios WHERE email = $1`, [email]);
+    // conta já vinculada a outra identidade da central não pode ser sequestrada
+    if (porEmail && porEmail.central_uuid && porEmail.central_uuid !== claims.sub) {
+      throw new Error('e-mail já vinculado a outra conta da central');
+    }
+    user = porEmail;
   }
 
   // 2) upsert do usuário (id local permanece próprio; central_uuid sempre setado)
   if (user) {
+    // role só é ditado pela central em contas nativas de SSO; conta local mantém o papel definido aqui
+    const nativaSso = user.senha_hash === '!sso!';
     await query(
-      `UPDATE usuarios SET central_uuid = $2, email = $3, nome = $4, role = $5::user_role,
+      `UPDATE usuarios SET central_uuid = $2, email = $3, nome = $4,
+        role = CASE WHEN $7 THEN $5::user_role ELSE role END,
         telefone = COALESCE($6, telefone), atualizado_em = NOW() WHERE id = $1`,
-      [user.id, claims.sub, email, claims.nome, role, telefone]
+      [user.id, claims.sub, email, claims.nome, role, telefone, nativaSso]
     );
     user.email = email;
     user.nome = claims.nome;
-    user.role = role;
+    if (nativaSso) user.role = role;
   } else {
     // senha_hash inutilizável: usuário SSO nunca loga por senha (bcrypt.compare falha)
     const novo = await queryOne<DbUser>(
       `INSERT INTO usuarios (central_uuid, email, senha_hash, nome, role, telefone, ativo)
        VALUES ($1, $2, '!sso!', $3, $4::user_role, $5, true)
-       RETURNING id, email, nome, role, condominio_id, ativo, bloqueado`,
+       RETURNING ${CAMPOS_USER}`,
       [claims.sub, email, claims.nome, role, telefone]
     );
     user = novo!;

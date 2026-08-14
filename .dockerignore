@@ -10,3 +10,12 @@ android/
 ios/
 *.md
 .vscode/
+server/
+appvistoria/
+appvistoria.html
+*.litcoffee
+generate_banner.py
+capacitor.config.ts
+Dockerfile
+docker-compose.yml
+.github/

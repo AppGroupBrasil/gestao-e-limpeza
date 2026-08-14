@@ -11,7 +11,7 @@ router.get('/', async (req: AuthRequest, res: Response) => {
     const user = req.user!;
     let rows;
 
-    if (user.role === 'master' || user.role === 'administrador') {
+    if (user.role === 'master') {
       rows = await query(
         `SELECT g.*, u.nome as user_nome FROM geolocalizacao g
          LEFT JOIN usuarios u ON u.id = g.user_id
@@ -19,11 +19,20 @@ router.get('/', async (req: AuthRequest, res: Response) => {
          ORDER BY g.hora_chegada DESC LIMIT 500`,
         [data || null]
       );
+    } else if (user.role === 'administrador') {
+      // Somente usuários da própria conta (ou o próprio administrador)
+      rows = await query(
+        `SELECT g.*, u.nome as user_nome FROM geolocalizacao g
+         INNER JOIN usuarios u ON u.id = g.user_id
+         WHERE (u.administrador_id = $1 OR u.id = $1) AND ($2::date IS NULL OR g.data = $2::date)
+         ORDER BY g.hora_chegada DESC LIMIT 500`,
+        [user.id, data || null]
+      );
     } else if (user.role === 'supervisor') {
       rows = await query(
         `SELECT g.*, u.nome as user_nome FROM geolocalizacao g
-         LEFT JOIN usuarios u ON u.id = g.user_id
-         WHERE u.supervisor_id = $1 AND ($2::date IS NULL OR g.data = $2::date)
+         INNER JOIN usuarios u ON u.id = g.user_id
+         WHERE (u.supervisor_id = $1 OR u.id = $1) AND ($2::date IS NULL OR g.data = $2::date)
          ORDER BY g.hora_chegada DESC LIMIT 500`,
         [user.id, data || null]
       );

@@ -86,9 +86,20 @@ router.delete('/:id', async (req: AuthRequest, res: Response) => {
 
 // ── Movimentações ──
 
+/** Garante que o material pertence a um condomínio do escopo */
+async function materialNoEscopo(req: AuthRequest): Promise<boolean> {
+  const ids: string[] = (req as any).condominioIds;
+  const row = await queryOne(
+    'SELECT 1 FROM materiais WHERE id = $1 AND (condominio_id IS NULL OR condominio_id = ANY($2))',
+    [req.params.id, ids]
+  );
+  return !!row;
+}
+
 // GET /api/materiais/:id/movimentacoes
 router.get('/:id/movimentacoes', async (req: AuthRequest, res: Response) => {
   try {
+    if (!await materialNoEscopo(req)) { res.status(404).json({ error: 'Material não encontrado' }); return; }
     const rows = await query(
       `SELECT * FROM materiais_movimentacoes WHERE material_id = $1 ORDER BY data DESC`,
       [req.params.id]
@@ -103,21 +114,25 @@ router.get('/:id/movimentacoes', async (req: AuthRequest, res: Response) => {
 // POST /api/materiais/:id/movimentacoes
 router.post('/:id/movimentacoes', async (req: AuthRequest, res: Response) => {
   try {
+    if (!await materialNoEscopo(req)) { res.status(404).json({ error: 'Material não encontrado' }); return; }
     const { tipo, quantidade, observacao, fotos, notaFiscalUrl, audioUrl, funcionarioNome } = req.body;
     const materialId = req.params.id;
+    const qtd = Number(quantidade);
+    if (!Number.isFinite(qtd) || qtd <= 0) { res.status(400).json({ error: 'Quantidade inválida' }); return; }
+    if (tipo !== 'entrada' && tipo !== 'saida') { res.status(400).json({ error: 'Tipo inválido' }); return; }
 
     const row = await withTransaction(async (client) => {
       // Atualizar quantidade do material
       const op = tipo === 'entrada' ? '+' : '-';
       await client.query(
-        `UPDATE materiais SET quantidade = quantidade ${op} $1 WHERE id = $2`,
-        [quantidade, materialId]
+        `UPDATE materiais SET quantidade = GREATEST(quantidade ${op} $1, 0) WHERE id = $2`,
+        [qtd, materialId]
       );
 
       const { rows } = await client.query(
         `INSERT INTO materiais_movimentacoes (material_id, tipo, quantidade, observacao, fotos, nota_fiscal_url, audio_url, funcionario_id, funcionario_nome)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-        [materialId, tipo, quantidade, observacao, fotos || [], notaFiscalUrl, audioUrl, req.user!.id, funcionarioNome || req.user!.nome]
+        [materialId, tipo, qtd, observacao, fotos || [], notaFiscalUrl, audioUrl, req.user!.id, funcionarioNome || req.user!.nome]
       );
       return rows[0];
     });

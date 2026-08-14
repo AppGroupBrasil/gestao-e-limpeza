@@ -1,4 +1,4 @@
-import { Router, Response } from 'express';
+import { Router, Response, NextFunction } from 'express';
 import multer from 'multer';
 import sharp from 'sharp';
 import path from 'node:path';
@@ -42,13 +42,31 @@ function detectarTipoReal(buf: Buffer): string | null {
   return null;
 }
 
+const IMAGENS = ['.jpg', '.png', '.webp'];
+
+/** Converte falhas do multer (tamanho, tipo) em 400 em vez de 500 */
+function uploadSingle(campo: string) {
+  return (req: AuthRequest, res: Response, next: NextFunction) => {
+    upload.single(campo)(req as any, res as any, (err: any) => {
+      if (!err) { next(); return; }
+      const tamanho = err?.code === 'LIMIT_FILE_SIZE';
+      res.status(400).json({ error: tamanho ? 'Arquivo maior que 10MB' : (err.message || 'Upload inválido') });
+    });
+  };
+}
+
 const router = Router();
 
 // POST /api/upload/image
-router.post('/image', upload.single('file'), async (req: AuthRequest, res: Response) => {
+router.post('/image', uploadSingle('file'), async (req: AuthRequest, res: Response) => {
   try {
     if (!req.file) {
       res.status(400).json({ error: 'Nenhum arquivo enviado' });
+      return;
+    }
+
+    if (!IMAGENS.includes(detectarTipoReal(req.file.buffer) || '')) {
+      res.status(400).json({ error: 'Arquivo inválido — apenas JPEG, PNG ou WebP' });
       return;
     }
 
@@ -78,10 +96,15 @@ router.post('/image', upload.single('file'), async (req: AuthRequest, res: Respo
 });
 
 // POST /api/upload/avatar
-router.post('/avatar', upload.single('file'), async (req: AuthRequest, res: Response) => {
+router.post('/avatar', uploadSingle('file'), async (req: AuthRequest, res: Response) => {
   try {
     if (!req.file) {
       res.status(400).json({ error: 'Nenhum arquivo enviado' });
+      return;
+    }
+
+    if (!IMAGENS.includes(detectarTipoReal(req.file.buffer) || '')) {
+      res.status(400).json({ error: 'Arquivo inválido — apenas JPEG, PNG ou WebP' });
       return;
     }
 
@@ -102,7 +125,7 @@ router.post('/avatar', upload.single('file'), async (req: AuthRequest, res: Resp
 });
 
 // POST /api/upload/document
-router.post('/document', upload.single('file'), async (req: AuthRequest, res: Response) => {
+router.post('/document', uploadSingle('file'), async (req: AuthRequest, res: Response) => {
   try {
     if (!req.file) {
       res.status(400).json({ error: 'Nenhum arquivo enviado' });

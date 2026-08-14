@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import { query, queryOne, execute } from '../db/database.js';
 import { AuthRequest } from '../middleware/auth.js';
+import { requireMinRole, getTenantId } from '../middleware/rbac.js';
 
 const router = Router();
 
@@ -33,11 +34,12 @@ const CATEGORIAS_PADRAO = [
 ];
 
 // GET /api/documentos-publicos/categorias
-router.get('/categorias', async (_req: AuthRequest, res: Response) => {
+router.get('/categorias', async (req: AuthRequest, res: Response) => {
   try {
   const row = await queryOne(
-    `SELECT valor FROM configuracoes_gerais WHERE chave = $1`,
-    [CATEGORIAS_KEY]
+    `SELECT valor FROM configuracoes_gerais WHERE chave = $1 AND tenant_id IN ($2, 'global')
+     ORDER BY (tenant_id = $2) DESC LIMIT 1`,
+    [CATEGORIAS_KEY, getTenantId(req.user)]
   );
   if (row?.valor) {
     try { res.json(JSON.parse(row.valor)); return; } catch { /* fallback */ }
@@ -47,7 +49,7 @@ router.get('/categorias', async (_req: AuthRequest, res: Response) => {
 });
 
 // PUT /api/documentos-publicos/categorias
-router.put('/categorias', async (req: AuthRequest, res: Response) => {
+router.put('/categorias', requireMinRole('supervisor'), async (req: AuthRequest, res: Response) => {
   try {
   const { categorias } = req.body;
   if (!Array.isArray(categorias)) { res.status(400).json({ error: 'Lista inválida' }); return; }
@@ -55,9 +57,9 @@ router.put('/categorias', async (req: AuthRequest, res: Response) => {
     .filter((c: any) => c.value && c.label)
     .map((c: any) => ({ value: String(c.value).slice(0, 50), label: String(c.label).slice(0, 80) }));
   await execute(
-    `INSERT INTO configuracoes_gerais (chave, valor) VALUES ($1, $2)
-     ON CONFLICT (chave) DO UPDATE SET valor = $2`,
-    [CATEGORIAS_KEY, JSON.stringify(sanitized)]
+    `INSERT INTO configuracoes_gerais (tenant_id, chave, valor) VALUES ($3, $1, $2)
+     ON CONFLICT (tenant_id, chave) DO UPDATE SET valor = $2`,
+    [CATEGORIAS_KEY, JSON.stringify(sanitized), getTenantId(req.user)]
   );
   res.json(sanitized);
   } catch (err: any) { console.error('PUT /documentos-publicos/categorias erro:', err.message); res.status(500).json({ error: 'Erro interno' }); }

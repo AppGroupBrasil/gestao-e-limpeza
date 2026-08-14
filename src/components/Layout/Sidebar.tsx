@@ -7,7 +7,7 @@ import { useDemo } from '../../contexts/DemoContext';
 import {
   LayoutDashboard, Users, ClipboardCheck, Wrench, Calendar,
   Package, Search, MapPin, Settings, LogOut, ChevronLeft,
-    ChevronRight, Building2, BarChart3, Shield, Menu, FileWarning, Eye, EyeOff, QrCode, ScanLine, Flame, CalendarCheck, BookOpen, CalendarClock, Contact, Megaphone, Columns3, GripVertical, RotateCcw, Bell, User, ClipboardList, FileText, GraduationCap
+    ChevronRight, Building2, BarChart3, Shield, Menu, FileWarning, Eye, EyeOff, QrCode, ScanLine, Flame, CalendarCheck, BookOpen, CalendarClock, Contact, Megaphone, Columns3, GripVertical, RotateCcw, Bell, User, ClipboardList, FileText, GraduationCap, X
 } from 'lucide-react';
 import styles from './Sidebar.module.css';
 import logoImg from '../../assets/logo.png';
@@ -60,6 +60,7 @@ const ALWAYS_VISIBLE = ['qrcode-respostas'];
 const Sidebar: React.FC = () => {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [gridAberta, setGridAberta] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
   const { usuario, logout } = useAuth();
@@ -93,6 +94,11 @@ const Sidebar: React.FC = () => {
   const dragIdx = useRef<number | null>(null);
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
   const [unreadCount, setUnreadCount] = useState(0);
+
+  useEffect(() => {
+    setGridAberta(false);
+    setMobileOpen(false);
+  }, [location.pathname]);
 
   useEffect(() => {
     if (!isDemo) {
@@ -163,6 +169,7 @@ const Sidebar: React.FC = () => {
   const handleNav = (rota: string) => {
     navigate(rota);
     setMobileOpen(false);
+    setGridAberta(false);
   };
 
   const handleLogout = async () => {
@@ -206,11 +213,33 @@ const Sidebar: React.FC = () => {
                   </div>
                 </div>
               )}
+              <button
+                className={styles.topBarMenuBtn}
+                onClick={() => setGridAberta(!gridAberta)}
+                aria-label={gridAberta ? 'Fechar menu' : 'Abrir menu'}
+                aria-expanded={gridAberta}
+              >
+                {gridAberta ? <X size={18} /> : <Menu size={18} />}
+              </button>
               <button className={styles.topBarLogout} onClick={handleLogout}>
                 <LogOut size={18} />
               </button>
             </div>
           </div>
+          {gridAberta && (
+          <nav className={styles.topBarNav}>
+            {filteredItems.map(item => (
+              <button
+                key={item.id}
+                className={`${styles.topBarItem} ${location.pathname === item.rota ? styles.topBarItemActive : ''}`}
+                onClick={() => handleNav(item.rota)}
+              >
+                <span className={styles.topBarIcon}>{item.icon}</span>
+                <span className={styles.topBarLabel}>{item.label}</span>
+              </button>
+            ))}
+          </nav>
+          )}
         </div>
       )}
 
@@ -269,7 +298,7 @@ const Sidebar: React.FC = () => {
           </div>
         )}
 
-        <nav className={styles.nav}>
+        <nav className={`${styles.nav} ${!editandoOrdem && !collapsed ? styles.navGrid : ''}`}>
           {!collapsed && (
             <div className={styles.reorderBar}>
               <button

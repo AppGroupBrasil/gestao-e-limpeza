@@ -47,6 +47,12 @@ function getTransporter(): nodemailer.Transporter {
       user,
       pass,
     },
+    pool: true,
+    maxConnections: 5,
+    maxMessages: 100,
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 20000,
   });
 
   return transporter;

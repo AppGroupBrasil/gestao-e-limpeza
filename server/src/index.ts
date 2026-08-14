@@ -17,6 +17,7 @@ import { scopeMiddleware } from './middleware/rbac.js';
 import { trackMetric } from './middleware/helpers.js';
 import { handle500 } from './middleware/errors.js';
 import { logger } from './services/logger.js';
+import { escapeHtml } from './utils/html.js';
 import { sendMail, isMailerConfigured, buildRespostaPdf } from './services/mailer.js';
 import authRoutes from './routes/auth.js';
 import provisioningRoutes from './routes/provisioning.js';
@@ -97,7 +98,15 @@ app.use(cors({
 }));
 // 6mb: cobre selfie de ronda em base64 (limite anunciado de 3MB ≈ 4M chars) + JSON
 app.use(express.json({ limit: '6mb' }));
-app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
+app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads'), {
+  index: false,
+  dotfiles: 'deny',
+  setHeaders: (res) => {
+    res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Disposition', 'inline');
+  },
+}));
 
 // ── Rate limiters ──
 const publicWriteLimiter = rateLimit({
@@ -116,7 +125,7 @@ const publicReadLimiter = rateLimit({
 
 // ── Rotas públicas ──
 app.use('/api/auth', authRoutes);
-app.use('/api/provisioning', provisioningRoutes);
+app.use('/api/provisioning', publicWriteLimiter, provisioningRoutes);
 app.use('/api/sso', ssoRoutes);
 
 // ── QR Code público (sem auth) ──
@@ -158,7 +167,7 @@ app.post('/api/public/qrcodes/:id/resposta', publicWriteLimiter, async (req, res
           const nomeRespondente = identificacao?.nome || 'Anônimo';
           const tipoRespondente = identificacao?.tipo || 'público';
           const blocoUnidade = identificacao?.bloco && identificacao?.unidade
-            ? ` — Bloco ${identificacao.bloco}, Unidade ${identificacao.unidade}`
+            ? ` — Bloco ${escapeHtml(identificacao.bloco)}, Unidade ${escapeHtml(identificacao.unidade)}`
             : '';
 
           let blocosDef: any[] = [];
@@ -188,10 +197,10 @@ app.post('/api/public/qrcodes/:id/resposta', publicWriteLimiter, async (req, res
               <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:24px;background:#fff;border:1px solid #e0e0e0;border-radius:8px">
                 <div style="background:#1565c0;color:#fff;padding:16px 24px;border-radius:6px 6px 0 0;margin:-24px -24px 24px">
                   <h1 style="margin:0;font-size:20px">Nova resposta recebida</h1>
-                  <p style="margin:4px 0 0;opacity:.85;font-size:13px">QR Code: <strong>${qrRow.nome}</strong></p>
+                  <p style="margin:4px 0 0;opacity:.85;font-size:13px">QR Code: <strong>${escapeHtml(qrRow.nome)}</strong></p>
                 </div>
-                <p style="color:#333;margin:0 0 12px"><strong>${nomeRespondente}</strong>${blocoUnidade} respondeu o formulário em <strong>${dataHora}</strong>.</p>
-                <p style="color:#555;margin:0 0 8px">Perfil: ${tipoRespondente}${identificacao?.email ? ` &middot; ${identificacao.email}` : ''}</p>
+                <p style="color:#333;margin:0 0 12px"><strong>${escapeHtml(nomeRespondente)}</strong>${blocoUnidade} respondeu o formulário em <strong>${escapeHtml(dataHora)}</strong>.</p>
+                <p style="color:#555;margin:0 0 8px">Perfil: ${escapeHtml(tipoRespondente)}${identificacao?.email ? ` &middot; ${escapeHtml(identificacao.email)}` : ''}</p>
                 <p style="color:#1565c0;margin:18px 0 0;font-size:14px"><strong>📎 Formulário completo em anexo (PDF)</strong> — pronto para imprimir ou compartilhar.</p>
                 <p style="margin:24px 0 0;font-size:12px;color:#aaa">Enviado automaticamente pelo sistema Gestão e Limpeza.</p>
               </div>`,
@@ -337,7 +346,8 @@ app.get('/api/public/checklists/:id', publicReadLimiter, async (req, res) => {
     if (!row) { res.status(404).json({ error: 'Checklist não encontrado' }); return; }
     res.json(row);
   } catch (err: any) {
-    res.status(500).json({ error: err.message || 'Erro interno' });
+    logger.error({ err: err?.message }, '[PUBLIC CHECKLIST]');
+    res.status(500).json({ error: 'Erro interno no servidor' });
   }
 });
 
@@ -517,6 +527,11 @@ app.get('/api/health', async (_req, res) => {
 });
 
 app.use('/api', protectedRouter);
+
+// ── 404 para rotas de API inexistentes (evita cair no handler genérico) ──
+app.use('/api', (_req: express.Request, res: express.Response) => {
+  res.status(404).json({ error: 'Rota não encontrada' });
+});
 
 // ── Global error handler (captura erros não tratados em qualquer rota) ──
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {

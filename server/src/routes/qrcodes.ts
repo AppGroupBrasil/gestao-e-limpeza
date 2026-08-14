@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import { query, queryOne, execute } from '../db/database.js';
 import { AuthRequest } from '../middleware/auth.js';
+import { requireMinRole, getTenantId } from '../middleware/rbac.js';
 
 const router = Router();
 
@@ -154,19 +155,23 @@ router.patch('/sla/:id', async (req: AuthRequest, res: Response) => {
 // GET /api/qrcodes/supervisor-perm
 router.get('/supervisor-perm', async (req: AuthRequest, res: Response) => {
   try {
-    const row = await queryOne(`SELECT valor FROM configuracoes_gerais WHERE chave = 'qrcode_supervisor_autorizado'`);
+    const row = await queryOne(
+      `SELECT valor FROM configuracoes_gerais WHERE chave = 'qrcode_supervisor_autorizado' AND tenant_id IN ($1, 'global')
+       ORDER BY (tenant_id = $1) DESC LIMIT 1`,
+      [getTenantId(req.user)]
+    );
     res.json({ autorizado: row?.valor === 'true' });
   } catch (err: any) { console.error("[QRCodes]", err.message); res.status(500).json({ error: "Erro interno" }); }
 });
 
 // PUT /api/qrcodes/supervisor-perm
-router.put('/supervisor-perm', async (req: AuthRequest, res: Response) => {
+router.put('/supervisor-perm', requireMinRole('administrador'), async (req: AuthRequest, res: Response) => {
   try {
     const { autorizado } = req.body;
     await execute(
-      `INSERT INTO configuracoes_gerais (chave, valor) VALUES ('qrcode_supervisor_autorizado', $1)
-       ON CONFLICT (chave) DO UPDATE SET valor = $1`,
-      [autorizado ? 'true' : 'false']
+      `INSERT INTO configuracoes_gerais (tenant_id, chave, valor) VALUES ($2, 'qrcode_supervisor_autorizado', $1)
+       ON CONFLICT (tenant_id, chave) DO UPDATE SET valor = $1`,
+      [autorizado ? 'true' : 'false', getTenantId(req.user)]
     );
     res.json({ autorizado });
   } catch (err: any) { console.error("[QRCodes]", err.message); res.status(500).json({ error: "Erro interno" }); }

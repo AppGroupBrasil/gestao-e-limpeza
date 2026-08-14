@@ -2,15 +2,19 @@ import { Router, Response } from 'express';
 import { query, queryOne, execute } from '../db/database.js';
 import { AuthRequest } from '../middleware/auth.js';
 import { dataUrlToAttachment, isMailerConfigured, sendMail } from '../services/mailer.js';
+import { escapeHtml, sanitizeEmailHtml } from '../utils/html.js';
 
 const router = Router();
+
+const MAX_DESTINATARIOS = 500;
+const CONCORRENCIA_ENVIO = 5;
 
 function buildFallbackHtml(titulo: string, mensagem: string) {
   return `
     <div style="font-family:Arial,sans-serif;background:#f5f7fa;padding:24px;color:#1f2937;">
       <div style="max-width:600px;margin:0 auto;background:#ffffff;border-radius:16px;padding:32px;border:1px solid #e5e7eb;">
-        <h1 style="margin:0 0 16px;font-size:24px;color:#111827;">${titulo}</h1>
-        <div style="line-height:1.7;white-space:pre-wrap;">${mensagem || ''}</div>
+        <h1 style="margin:0 0 16px;font-size:24px;color:#111827;">${escapeHtml(titulo)}</h1>
+        <div style="line-height:1.7;white-space:pre-wrap;">${escapeHtml(mensagem || '')}</div>
       </div>
     </div>
   `;
@@ -62,30 +66,35 @@ router.post('/', async (req: AuthRequest, res: Response) => {
       destinatarios = emails.map((email: string) => ({ email, nome: email }));
     }
 
+    destinatarios = destinatarios.filter((d: any) => /^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(String(d.email || '').trim()));
+
     if (destinatarios.length === 0) {
       res.status(400).json({ error: 'Nenhum destinatário com e-mail informado.' });
       return;
     }
+    if (destinatarios.length > MAX_DESTINATARIOS) {
+      res.status(400).json({ error: `Máximo de ${MAX_DESTINATARIOS} destinatários por envio.` });
+      return;
+    }
 
     const attachments = pdfAnexo && pdfNome ? [dataUrlToAttachment(pdfAnexo, pdfNome)] : [];
-    const trackingFinal = [];
-    const htmlBase = emailHtml || buildFallbackHtml(titulo, mensagem);
+    const trackingFinal: any[] = [];
+    const htmlBase = emailHtml ? sanitizeEmailHtml(emailHtml) : buildFallbackHtml(titulo, mensagem);
     const subject = assunto || titulo;
 
-    for (const destinatario of destinatarios) {
-      const atualizadoEm = new Date().toISOString();
-      try {
-        await sendMail({
-          to: destinatario.email,
-          subject,
-          html: htmlBase,
-          attachments,
-        });
-        trackingFinal.push({ ...destinatario, status: 'enviado', atualizadoEm });
-      } catch {
-        trackingFinal.push({ ...destinatario, status: 'erro', atualizadoEm });
+    const fila = [...destinatarios];
+    const worker = async () => {
+      for (let destinatario = fila.shift(); destinatario; destinatario = fila.shift()) {
+        const atualizadoEm = new Date().toISOString();
+        try {
+          await sendMail({ to: destinatario.email, subject, html: htmlBase, attachments });
+          trackingFinal.push({ ...destinatario, status: 'enviado', atualizadoEm });
+        } catch {
+          trackingFinal.push({ ...destinatario, status: 'erro', atualizadoEm });
+        }
       }
-    }
+    };
+    await Promise.all(Array.from({ length: Math.min(CONCORRENCIA_ENVIO, fila.length) }, worker));
 
     const emailsComSucesso = trackingFinal.filter((item) => item.status === 'enviado').map((item) => item.email);
     if (emailsComSucesso.length === 0) {

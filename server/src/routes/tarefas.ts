@@ -96,9 +96,20 @@ router.delete('/:id', async (req: AuthRequest, res: Response) => {
 
 // ── Execuções de Tarefas ──
 
+/** Garante que a tarefa pertence a um condomínio do escopo */
+async function tarefaNoEscopo(req: AuthRequest): Promise<boolean> {
+  const ids: string[] = (req as any).condominioIds;
+  const row = await queryOne(
+    'SELECT 1 FROM tarefas_agendadas WHERE id = $1 AND (condominio_id IS NULL OR condominio_id = ANY($2))',
+    [req.params.id, ids]
+  );
+  return !!row;
+}
+
 // GET /api/tarefas/:id/execucoes
 router.get('/:id/execucoes', async (req: AuthRequest, res: Response) => {
   try {
+    if (!await tarefaNoEscopo(req)) { res.status(404).json({ error: 'Tarefa não encontrada' }); return; }
     const rows = await query(
       'SELECT * FROM tarefas_execucoes WHERE tarefa_id = $1 ORDER BY data_execucao DESC',
       [req.params.id]
@@ -133,6 +144,7 @@ router.get('/execucoes/all', async (req: AuthRequest, res: Response) => {
 // POST /api/tarefas/:id/execucoes
 router.post('/:id/execucoes', async (req: AuthRequest, res: Response) => {
   try {
+    if (!await tarefaNoEscopo(req)) { res.status(404).json({ error: 'Tarefa não encontrada' }); return; }
     const { funcionarioNome, status, fotos, observacao, latitude, longitude, audioUrl } = req.body;
     const row = await queryOne(
       `INSERT INTO tarefas_execucoes (tarefa_id, funcionario_id, funcionario_nome, status, fotos, observacao, latitude, longitude, audio_url)

@@ -13,6 +13,10 @@ const useSsl = process.env.DB_SSL === 'false'
     ? { ca: sslCa, rejectUnauthorized: true }
     : { rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED === 'true' };
 
+if (process.env.NODE_ENV === 'production' && useSsl && useSsl.rejectUnauthorized === false) {
+  console.warn('[DB] AVISO: conexão SSL sem validação de certificado. Defina DB_SSL_CA ou DB_SSL_REJECT_UNAUTHORIZED=true.');
+}
+
 const pool = new Pool({
   ...(DATABASE_URL
     ? {

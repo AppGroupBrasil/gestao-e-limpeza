@@ -132,59 +132,43 @@ router.put('/:id', requireMinRole('administrador'), async (req: AuthRequest, res
       res.status(403).json({ error: 'Sem acesso a este condomínio' });
       return;
     }
-    const {
-      nome,
-      endereco,
-      cidade,
-      estado,
-      cep,
-      sindico,
-      telefone,
-      email,
-      logoUrl,
-      loginTitulo,
-      loginSubtitulo,
-      relatorioResponsavelNome,
-      relatorioResponsavelCargo,
-      relatorioResponsavelRegistro,
-      relatorioTelefone,
-      relatorioEmail,
-      relatorioDocumento,
-      relatorioObservacoes,
-      blocos,
-      unidades,
-    } = req.body;
+    const COLUNAS: Record<string, string> = {
+      nome: 'nome',
+      endereco: 'endereco',
+      cidade: 'cidade',
+      estado: 'estado',
+      cep: 'cep',
+      sindico: 'sindico',
+      telefone: 'telefone',
+      email: 'email',
+      logoUrl: 'logo_url',
+      loginTitulo: 'login_titulo',
+      loginSubtitulo: 'login_subtitulo',
+      relatorioResponsavelNome: 'relatorio_responsavel_nome',
+      relatorioResponsavelCargo: 'relatorio_responsavel_cargo',
+      relatorioResponsavelRegistro: 'relatorio_responsavel_registro',
+      relatorioTelefone: 'relatorio_telefone',
+      relatorioEmail: 'relatorio_email',
+      relatorioDocumento: 'relatorio_documento',
+      relatorioObservacoes: 'relatorio_observacoes',
+      blocos: 'blocos',
+      unidades: 'unidades',
+    };
+    const sets: string[] = [];
+    const valores: any[] = [];
+    for (const [campo, coluna] of Object.entries(COLUNAS)) {
+      if (req.body[campo] !== undefined) {
+        valores.push(req.body[campo]);
+        sets.push(`${coluna} = $${valores.length}`);
+      }
+    }
+    if (sets.length === 0) { res.status(400).json({ error: 'Nenhum campo para atualizar' }); return; }
+    valores.push(req.params.id);
     const row = await queryOne(
-      `UPDATE condominios SET nome=$1, endereco=$2, cidade=$3, estado=$4, cep=$5,
-       sindico=$6, telefone=$7, email=$8, logo_url=$9, login_titulo=$10, login_subtitulo=$11,
-       relatorio_responsavel_nome=$12, relatorio_responsavel_cargo=$13, relatorio_responsavel_registro=$14,
-       relatorio_telefone=$15, relatorio_email=$16, relatorio_documento=$17, relatorio_observacoes=$18,
-       blocos=$19, unidades=$20
-       WHERE id=$21 RETURNING *`,
-      [
-        nome,
-        endereco,
-        cidade,
-        estado,
-        cep,
-        sindico,
-        telefone,
-        email,
-        logoUrl,
-        loginTitulo,
-        loginSubtitulo,
-        relatorioResponsavelNome,
-        relatorioResponsavelCargo,
-        relatorioResponsavelRegistro,
-        relatorioTelefone,
-        relatorioEmail,
-        relatorioDocumento,
-        relatorioObservacoes,
-        blocos,
-        unidades,
-        req.params.id,
-      ]
+      `UPDATE condominios SET ${sets.join(', ')} WHERE id = $${valores.length} RETURNING *`,
+      valores
     );
+    if (!row) { res.status(404).json({ error: 'Condomínio não encontrado' }); return; }
     res.json(row);
   } catch (err: any) {
     console.error('PUT /condominios/:id erro:', err.message);

@@ -37,7 +37,6 @@
     <link rel="icon" type="image/png" sizes="192x192" href="/logo-192.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <meta name="theme-color" content="#f57c00" />
-    <link rel="manifest" href="/manifest.json" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Gestão e Limpeza" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -110,25 +109,6 @@
   <body>
     <noscript>Você precisa habilitar JavaScript para usar o Gestão e Limpeza.</noscript>
     <div id="root"></div>
-    <script>
-      // Force-clear stale Service Workers and caches from previous builds
-      if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.getRegistrations().then(function(regs) {
-          regs.forEach(function(r) {
-            if (r.active && r.active.scriptURL && !r.active.scriptURL.includes('workbox')) {
-              r.unregister();
-            }
-          });
-        });
-        if ('caches' in window) {
-          caches.keys().then(function(names) {
-            names.forEach(function(name) {
-              if (name.startsWith('gestao')) caches.delete(name);
-            });
-          });
-        }
-      }
-    </script>
     <script type="module" src="/src/main.tsx"></script>
     <script src="https://appgroupbrasil.com.br/embed/app-group-banner.js" data-color="#f57c00" data-routes="/" defer></script>
   </body>

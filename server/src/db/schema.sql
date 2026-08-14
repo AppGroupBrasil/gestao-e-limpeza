@@ -49,6 +49,7 @@ CREATE TABLE usuarios (
   avatar_url TEXT,
   telefone VARCHAR(20),
   cargo VARCHAR(100),
+  senha_alterada_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -632,10 +633,12 @@ CREATE TABLE whats_contatos (
 -- ════════════════════════════════════════════
 
 CREATE TABLE permissoes_funcoes (
-  id VARCHAR(100) PRIMARY KEY,
+  tenant_id VARCHAR(64) NOT NULL DEFAULT 'global',
+  id VARCHAR(100) NOT NULL,
   nome VARCHAR(255) NOT NULL,
   ativa BOOLEAN NOT NULL DEFAULT true,
-  perfis JSONB NOT NULL DEFAULT '{"master":true,"administrador":true,"supervisor":true,"funcionario":false}'
+  perfis JSONB NOT NULL DEFAULT '{"master":true,"administrador":true,"supervisor":true,"funcionario":false}',
+  PRIMARY KEY (tenant_id, id)
 );
 
 -- ════════════════════════════════════════════
@@ -643,7 +646,7 @@ CREATE TABLE permissoes_funcoes (
 -- ════════════════════════════════════════════
 
 CREATE TABLE tema_config (
-  id VARCHAR(50) PRIMARY KEY DEFAULT 'global',
+  id VARCHAR(64) PRIMARY KEY DEFAULT 'global',
   cor_primaria VARCHAR(7) DEFAULT '#1a73e8',
   cor_secundaria VARCHAR(7) DEFAULT '#1557b0',
   cor_menu VARCHAR(7) DEFAULT '#1a1a2e',
@@ -660,7 +663,7 @@ CREATE TABLE tema_config (
 -- ════════════════════════════════════════════
 
 CREATE TABLE quadro_permissoes (
-  id VARCHAR(50) PRIMARY KEY DEFAULT 'global',
+  id VARCHAR(64) PRIMARY KEY DEFAULT 'global',
   cadastrar JSONB NOT NULL DEFAULT '{"master":true,"administrador":true,"supervisor":true,"funcionario":false}',
   editar JSONB NOT NULL DEFAULT '{"master":true,"administrador":true,"supervisor":true,"funcionario":false}',
   excluir JSONB NOT NULL DEFAULT '{"master":true,"administrador":true,"supervisor":false,"funcionario":false}'
@@ -671,7 +674,7 @@ CREATE TABLE quadro_permissoes (
 -- ════════════════════════════════════════════
 
 CREATE TABLE vencimentos_emails (
-  id VARCHAR(50) PRIMARY KEY DEFAULT 'global',
+  id VARCHAR(64) PRIMARY KEY DEFAULT 'global',
   emails TEXT[] DEFAULT '{}'
 );
 
@@ -687,8 +690,10 @@ INSERT INTO tema_config (id) VALUES ('global') ON CONFLICT DO NOTHING;
 -- ════════════════════════════════════════════
 
 CREATE TABLE IF NOT EXISTS configuracoes_gerais (
-  chave VARCHAR(100) PRIMARY KEY,
-  valor TEXT NOT NULL DEFAULT ''
+  tenant_id VARCHAR(64) NOT NULL DEFAULT 'global',
+  chave VARCHAR(100) NOT NULL,
+  valor TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (tenant_id, chave)
 );
 
 -- Permissões do quadro padrão

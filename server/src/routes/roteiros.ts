@@ -21,7 +21,11 @@ router.get('/', async (req: AuthRequest, res: Response) => {
 // GET /api/roteiros/:id
 router.get('/:id', async (req: AuthRequest, res: Response) => {
   try {
-  const row = await queryOne('SELECT * FROM roteiros WHERE id = $1', [req.params.id]);
+  const ids: string[] = (req as any).condominioIds;
+  const row = await queryOne(
+    'SELECT * FROM roteiros WHERE id = $1 AND (condominio_id IS NULL OR condominio_id = ANY($2))',
+    [req.params.id, ids]
+  );
   if (!row) { res.status(404).json({ error: 'Roteiro não encontrado' }); return; }
   res.json(row);
   } catch (err: any) { console.error('GET /roteiros/:id erro:', err.message); res.status(500).json({ error: 'Erro interno' }); }
@@ -30,11 +34,16 @@ router.get('/:id', async (req: AuthRequest, res: Response) => {
 // POST /api/roteiros
 router.post('/', async (req: AuthRequest, res: Response) => {
   try {
+  const ids: string[] = (req as any).condominioIds;
   const { titulo, descricao, categoria, capa, passos, condominioId } = req.body;
+  if (condominioId && !ids.includes(condominioId)) {
+    res.status(403).json({ error: 'Condomínio fora do seu escopo' });
+    return;
+  }
   const row = await queryOne(
     `INSERT INTO roteiros (titulo, descricao, categoria, capa, passos, condominio_id, criado_por)
      VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-    [titulo, descricao, categoria, capa, JSON.stringify(passos || []), condominioId, req.user!.id]
+    [titulo, descricao, categoria, capa, JSON.stringify(passos || []), condominioId || null, req.user!.id]
   );
   res.status(201).json(row);
   } catch (err: any) { console.error('POST /roteiros erro:', err.message); res.status(500).json({ error: 'Erro interno' }); }
@@ -67,9 +76,20 @@ router.delete('/:id', async (req: AuthRequest, res: Response) => {
 
 // ── Execuções de Roteiros ──
 
+/** Garante que o roteiro pertence ao escopo do usuário */
+async function roteiroNoEscopo(req: AuthRequest): Promise<boolean> {
+  const ids: string[] = (req as any).condominioIds;
+  const row = await queryOne(
+    'SELECT 1 FROM roteiros WHERE id = $1 AND (condominio_id IS NULL OR condominio_id = ANY($2))',
+    [req.params.id, ids]
+  );
+  return !!row;
+}
+
 // GET /api/roteiros/:id/execucoes
 router.get('/:id/execucoes', async (req: AuthRequest, res: Response) => {
   try {
+  if (!await roteiroNoEscopo(req)) { res.status(404).json({ error: 'Roteiro não encontrado' }); return; }
   const rows = await query(
     'SELECT * FROM roteiros_execucoes_log WHERE roteiro_id = $1 ORDER BY data DESC',
     [req.params.id]
@@ -81,6 +101,7 @@ router.get('/:id/execucoes', async (req: AuthRequest, res: Response) => {
 // POST /api/roteiros/:id/execucoes
 router.post('/:id/execucoes', async (req: AuthRequest, res: Response) => {
   try {
+  if (!await roteiroNoEscopo(req)) { res.status(404).json({ error: 'Roteiro não encontrado' }); return; }
   const { funcionarioNome, passosExec } = req.body;
   const row = await queryOne(
     `INSERT INTO roteiros_execucoes_log (roteiro_id, funcionario_id, funcionario_nome, passos_exec)

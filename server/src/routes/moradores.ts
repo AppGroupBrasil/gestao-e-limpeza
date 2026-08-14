@@ -79,10 +79,15 @@ router.get('/whatsapp-contatos', async (req: AuthRequest, res: Response) => {
 // POST /api/moradores/whatsapp-contatos
 router.post('/whatsapp-contatos', async (req: AuthRequest, res: Response) => {
   try {
+  const ids: string[] = (req as any).condominioIds;
   const { nome, telefone, condominioId } = req.body;
+  if (condominioId && !ids.includes(condominioId)) {
+    res.status(403).json({ error: 'Condomínio fora do seu escopo' });
+    return;
+  }
   const row = await queryOne(
     `INSERT INTO whats_contatos (nome, telefone, condominio_id) VALUES ($1,$2,$3) RETURNING *`,
-    [nome, telefone, condominioId]
+    [nome, telefone, condominioId || null]
   );
   res.status(201).json(row);
   } catch (err: any) { console.error('POST /whatsapp-contatos erro:', err.message); res.status(500).json({ error: 'Erro interno' }); }
@@ -91,7 +96,12 @@ router.post('/whatsapp-contatos', async (req: AuthRequest, res: Response) => {
 // DELETE /api/moradores/whatsapp-contatos/:id
 router.delete('/whatsapp-contatos/:id', async (req: AuthRequest, res: Response) => {
   try {
-  await execute('DELETE FROM whats_contatos WHERE id = $1', [req.params.id]);
+  const ids: string[] = (req as any).condominioIds;
+  const count = await execute(
+    'DELETE FROM whats_contatos WHERE id = $1 AND (condominio_id IS NULL OR condominio_id = ANY($2))',
+    [req.params.id, ids]
+  );
+  if (count === 0) { res.status(404).json({ error: 'Contato não encontrado' }); return; }
   res.json({ ok: true });
   } catch (err: any) { console.error('DELETE /whatsapp-contatos/:id erro:', err.message); res.status(500).json({ error: 'Erro interno' }); }
 });

@@ -265,8 +265,11 @@ export const auth = {
   register: (data: { email: string; senha: string; nome: string; role: string; condominioId?: string; supervisorId?: string }) =>
     post('/auth/register', data),
   me: () => request('/auth/me'),
-  changePassword: (senhaAtual: string, novaSenha: string) =>
-    post('/auth/change-password', { senhaAtual, novaSenha }),
+  changePassword: async (senhaAtual: string, novaSenha: string) => {
+    const res = await post<{ ok: boolean; token?: string }>('/auth/change-password', { senhaAtual, novaSenha });
+    if (res?.token) setToken(res.token);
+    return res;
+  },
   selfRegister: (data: { email: string; senha: string; nome: string; telefone?: string }) =>
     request<{ message: string }>('/auth/self-register', { method: 'POST', body: JSON.stringify(data) }),
   forgotPassword: (email: string) =>

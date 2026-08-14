@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import { query, queryOne, execute } from '../db/database.js';
 import { AuthRequest } from '../middleware/auth.js';
+import { requireMinRole, getTenantId } from '../middleware/rbac.js';
 
 const router = Router();
 
@@ -81,18 +82,23 @@ router.delete('/:id', async (req: AuthRequest, res: Response) => {
 // ── Emails globais de vencimentos ──
 
 // GET /api/vencimentos/emails
-router.get('/emails/global', async (_req: AuthRequest, res: Response) => {
-  const row = await queryOne('SELECT emails FROM vencimentos_emails WHERE id = $1', ['global']);
+router.get('/emails/global', async (req: AuthRequest, res: Response) => {
+  const tenantId = getTenantId(req.user);
+  const row =
+    (await queryOne('SELECT emails FROM vencimentos_emails WHERE id = $1', [tenantId])) ??
+    (tenantId === 'global' ? null : await queryOne('SELECT emails FROM vencimentos_emails WHERE id = $1', ['global']));
   res.json(row || { emails: [] });
 });
 
 // PUT /api/vencimentos/emails
-router.put('/emails/global', async (req: AuthRequest, res: Response) => {
-  const { emails } = req.body;
+router.put('/emails/global', requireMinRole('administrador'), async (req: AuthRequest, res: Response) => {
+  const lista: string[] = Array.isArray(req.body.emails)
+    ? req.body.emails.map((e: any) => String(e).trim().slice(0, 254)).filter((e: string) => /^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(e))
+    : [];
   const row = await queryOne(
-    `INSERT INTO vencimentos_emails (id, emails) VALUES ('global', $1)
+    `INSERT INTO vencimentos_emails (id, emails) VALUES ($2, $1)
      ON CONFLICT (id) DO UPDATE SET emails = $1 RETURNING *`,
-    [emails || []]
+    [lista, getTenantId(req.user)]
   );
   res.json(row);
 });
